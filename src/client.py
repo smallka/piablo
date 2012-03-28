@@ -1,5 +1,12 @@
-from bit_writer import BitWriter
+import socket
+import sys
+
 from bitstring import BitStream
+from bit_reader import BitReader
+from bit_writer import BitWriter
+ 
+HOST = "127.0.0.1"
+PORT = 1999
 
 toon_entity_id = (0, 0x00000000E23C2077)
 field1_game_id = (
@@ -38,11 +45,36 @@ def send_msg(sock, msg_id, msg_func):
     header = BitStream(uint=len(msg) + 4, length=32).tobytes()
     sock.send(header + msg)
 
-import socket
-import sys
- 
-HOST = "127.0.0.1"
-PORT = 1999
+def try_get_packet_size(data):
+    if len(data) < 4:
+        return None
+    size = BitStream(bytes=data[:4]).uint
+    if len(data) < size:
+        return None
+    return size
+
+def version_message(reader):
+    print "SNOPackHash: 0x%x" % reader.read_int(32)
+    print "ProtocolHash: 0x%x" % reader.read_int(32)
+    print "Version: %s" % reader.read_char_array(32)
+
+def connection_established_message(reader):
+    print "PlayerIndex: 0x%x" % reader.read_int(3)
+    print "Field1: 0x%x" % reader.read_int(32)
+    print "SNOPackHash: 0x%x" % reader.read_int(32)
+
+def game_setup_message(reader):
+    print "Field0: 0x%x" % reader.read_int(32)
+
+def save_point_info_message(reader):
+    print "snoLevelArea: 0x%x" % reader.read_int(32)
+    
+MESSAGE_DISPATCHER = {
+    13 : version_message,
+    49 : connection_established_message,
+    50 : game_setup_message,
+    73 : save_point_info_message,
+}
 
 def start():
     try:
@@ -59,11 +91,27 @@ def start():
             
     send_msg(sock, 10, join_bnet_game_message)
 
+    incoming = ""
     while True:
-        data = BitStream(bytes=sock.recv(1024))
-        print data
-        if data.len <= 0:
+        data = sock.recv(1024)
+        if len(data) == 0:
             break
+        incoming += data
+        while True:
+            size = try_get_packet_size(incoming)
+            if size is None:
+                break
+            reader = BitReader(incoming[4:size])
+            while reader.get_bit_len() >= 9:
+                opcode = reader.read_int(9)
+                print "------ opcode %d --------" % opcode
+                if opcode not in MESSAGE_DISPATCHER:
+                    sock.close()
+                    return
+                MESSAGE_DISPATCHER[opcode](reader)
+
+            incoming = incoming[size:]
+
     sock.close()
                       
 if __name__ == "__main__":

@@ -6,28 +6,28 @@ class BitWriter:
         self._bits = BitStream()
 
     def write_int(self, length, value):
-        bits = BitStream(uint=value, length=length)
+        news = BitStream(uint=value, length=length)
         start = 0
 
         if self._bits.len > 0:
             left = 8 - self._bits.len
-            if bits.len < left:
-                left = bits.len
-            self._bits = bits[:left] + self._bits
+            if news.len < left:
+                left = news.len
+            self._bits = news[:left] + self._bits
             start += left
 
             if self._bits.len == 8:
                 self._bytes += self._bits.tobytes()
                 self._bits = BitStream()
 
-        byte_len = (bits.len - start) / 8
+        byte_len = (news.len - start) / 8
         if byte_len > 0:
             more = byte_len * 8
-            self._bytes += bits[start:start+more].tobytes()
+            self._bytes += news[start:start+more].tobytes()
             start += more
 
-        if bits.len > start:
-            self._bits = bits[start:]
+        if news.len > start:
+            self._bits = news[start:]
 
     def write_int64(self, length, value):
         if length <= 32:

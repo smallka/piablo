@@ -1,0 +1,60 @@
+from bitstring import BitStream
+
+def _bit_count(value):
+    count = 0
+    while value > 0:
+        value >>= 1
+        count += 1
+    return count
+
+class BitReader:
+    def __init__(self, data):
+        self._bytes = data
+        self._bits = BitStream()
+
+    def read_int(self, length):
+        result = 0
+
+        if self._bits.len > 0:
+            if length < self._bits.len:
+                left = self._bits.len - length
+                result = self._bits[left:].uint
+                self._bits = self._bits[:left]
+                return result
+            length -= self._bits.len
+            result |= self._bits.uint << length
+            self._bits = BitStream()
+
+        byte_len = length / 8
+        if byte_len > 0:
+            length -= byte_len * 8
+            bits = BitStream(bytes=self._bytes[:byte_len])
+            result |= bits.uint << length
+            self._bytes = self._bytes[byte_len:]
+
+        if length > 0:
+            one_byte = BitStream(bytes=self._bytes[0])
+            left = 8 - length
+            result |= one_byte[left:].uint
+            self._bits = one_byte[:left]
+            self._bytes = self._bytes[1:]
+
+        return result
+
+    def read_int64(self, length):
+        if length <= 32:
+            return self.read_int(self, length)
+
+        count = length - 32
+        return (self.read_int(self, 32) << count) | self.read_int(count)
+
+    def read_char_array(self, max_length):
+        size = self.read_int(_bit_count(max_length))
+
+        self._bits = BitStream()
+        result = self._bytes[:size]
+        self._bytes = self._bytes[size:]
+        return result
+
+    def get_bit_len(self):
+        return len(self._bytes) * 8 + self._bits.len
