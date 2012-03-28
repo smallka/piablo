@@ -1,11 +1,5 @@
 from bitstring import BitStream
-
-def _bit_count(value):
-    count = 0
-    while value > 0:
-        value >>= 1
-        count += 1
-    return count
+from util import bit_count
 
 class BitReader:
     def __init__(self, data):
@@ -49,7 +43,7 @@ class BitReader:
         return (self.read_int(self, 32) << count) | self.read_int(count)
 
     def read_char_array(self, max_length):
-        size = self.read_int(_bit_count(max_length))
+        size = self.read_int(bit_count(max_length))
 
         self._bits = BitStream()
         result = self._bytes[:size]

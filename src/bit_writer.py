@@ -1,4 +1,5 @@
 from bitstring import BitStream
+from util import bit_count
 
 class BitWriter:
     def __init__(self):
@@ -36,6 +37,15 @@ class BitWriter:
         count = length - 32
         self.write_int(32, value >> count)
         self.write_int(count, value & ((1 << count) - 1))
+
+    def write_char_array(self, max_length, value):
+        self.write_int(bit_count(max_length), len(value))
+        if self._bits.len > 0:
+            more = 8 - self._bits.len
+            tail = (BitStream(int=0, length=more) + self._bits).tobytes()
+            self._bits = BitStream()
+            self._bytes += tail
+        self._bytes += value
 
     def get_bytes(self):
         if self._bits.len > 0:
