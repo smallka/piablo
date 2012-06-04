@@ -13,48 +13,60 @@ data Header = Header {
 parseHeader :: Get Header
 parseHeader = do
     signature <- getWord32le >>= return . fromIntegral
+    let archiveDataOffset = 0
+
+    -- TODO: check for MPQ user data presence
+
     headerSize <- getWord32le >>= return . fromIntegral
-    adl <- getWord32le >>= return . fromIntegral
+    archiveDataLengthV1 <- getWord32le >>= return . fromIntegral
     mpqVersion <- getWord16le >>= return . fromIntegral
     blockSize <- getWord16le >>= return . (shift 0x200) . fromIntegral
-    hto <- getWord32le >>= return . fromIntegral
-    bto <- getWord32le >>= return . fromIntegral
+    hashTableOffsetV1 <- getWord32le >>= return . fromIntegral
+    blockTableOffsetV1 <- getWord32le >>= return . fromIntegral
     hashTableLength <- getWord32le >>= return . fromIntegral
     blockTableLength <- getWord32le >>= return . fromIntegral
 
-    let htcs = let delta = bto - hto
-                   size = 16 * hashTableLength
+    let hashTableCompressedSize = let delta = blockTableOffsetV1 - hashTableOffsetV1
+                                      size = 16 * hashTableLength
                in if (delta > 0 && delta < size) then delta else size
-    let btcs = 16 * blockTableLength
+    let blockTableCompressedSize = 16 * blockTableLength
 
-    (hashTableOffset, blockTableOffset, highBlockTableOffset, highBlockTableCompressedSize) <- if mpqVersion >= 1
-        then parseV2 hto bto blockTableLength
-        else return (hto, bto, 0, 0)
+    (hashTableOffsetV2, blockTableOffsetV2, highBlockTableOffset, highBlockTableCompressedSize) <- if mpqVersion >= 1
+        then parseV2 hashTableOffsetV1 blockTableOffsetV1 blockTableLength
+        else return (hashTableOffsetV1, blockTableOffsetV1, 0, 0)
 
-    archiveDataLength <- if mpqVersion >= 2 && headerSize >= 0x44
+    archiveDataLengthV3 <- if mpqVersion >= 2 && headerSize >= 0x44
         then parseV3
-        else return (if highBlockTableOffset > hashTableOffset
-            then if highBlockTableOffset > blockTableOffset
+        else return (if highBlockTableOffset > hashTableOffsetV2
+            then if highBlockTableOffset > blockTableOffsetV2
                 then highBlockTableOffset + 4 * blockTableLength
-                else blockTableOffset + 16 * blockTableLength
-            else hashTableOffset + 16 * hashTableLength)
+                else blockTableOffsetV2 + 16 * blockTableLength
+            else hashTableOffsetV2 + 16 * hashTableLength)
     
-    (hashTableCompressedSize, blockTableCompressedSize, highBlockTableCompressedSize) <- if mpqVersion >= 3
+    (hashTableCompressedSizeV4, blockTableCompressedSizeV4, highBlockTableCompressedSize) <- if mpqVersion >= 3
         then parseV4
-        else return (htcs, btcs, if highBlockTableOffset > 0 then 4 * blockTableLength else 0)
+        else return (hashTableCompressedSize, blockTableCompressedSize, if highBlockTableOffset > 0 then 4 * blockTableLength else 0)
 
-    return $ Header headerSize archiveDataLength blockSize
+    let hashTableSize = 16 * hashTableLength
+    let blockTableSize = 16 * blockTableLength
+    let highBlockTableSize = if highBlockTableOffset /= 0 then 4 * blockTableLength else 0
+
+    -- TODO: check for strong signature presence
+    
+    readHashTable hashTableLength hashTableOffsetV2 hashTableCompressedSizeV4
+
+    return $ Header headerSize archiveDataLengthV3 blockSize
 
 parseV2 :: Int -> Int -> Int -> Get (Int, Int, Int, Int)
-parseV2 hto bto blockTableLength = do
+parseV2 hashTableOffsetV1 blockTableOffsetV1 blockTableLength = do
     highBlockTableOffset <- getWord64le >>= return . fromIntegral
     let highBlockTableCompressedSize = if highBlockTableOffset /= 0 then 4 * blockTableLength else 0
     hashTableOffsetHigh <- getWord16le >>= return . fromIntegral
     blockTableOffsetHigh <- getWord16le >>= return . fromIntegral
-    let hashTableOffset = hto `xor` (hashTableOffsetHigh `shift` 32)
-    let blockTableOffset = bto `xor` (blockTableOffsetHigh `shift` 32)
+    let hashTableOffsetV2 = hashTableOffsetV1 `xor` (hashTableOffsetHigh `shift` 32)
+    let blockTableOffsetV2 = blockTableOffsetV1 `xor` (blockTableOffsetHigh `shift` 32)
 
-    return (hashTableOffset, blockTableOffset, highBlockTableOffset, highBlockTableCompressedSize)
+    return (hashTableOffsetV2, blockTableOffsetV2, highBlockTableOffset, highBlockTableCompressedSize)
 
 parseV3 :: Get Int
 parseV3 = do
@@ -70,7 +82,20 @@ parseV4 = do
     highBlockTableCompressedSize <- getWord64le >>= return . fromIntegral
     skip 8 -- enhancedHashTableCompressedSize
     skip 8 -- enhancedBlockTableCompressedSize
+    skip 4 -- rawChunkSize
+    skip $ 6 * 16 -- hashes
     return (hashTableCompressedSize, blockTableCompressedSize, highBlockTableCompressedSize)
+
+hash :: String -> Int -> Int
+hash text hashOffset = 0
+
+readHashTable :: Int -> Int -> Int -> Get ()
+readHashTable hashTableLength hashTableOffset hashTableCompressedSize = do
+    readEncryptedUInt32Table hashTableLength hashTableOffset hashTableCompressedSize (hash "(hash table)" 0x300)
+
+readEncryptedUInt32Table :: Int -> Int -> Int -> Int -> Get ()
+readEncryptedUInt32Table tableLength tableOffset dataLength hashValue = do
+    return ()
 
 parseFile path = do
     contents <- L.readFile path
