@@ -1,20 +1,31 @@
 import qualified Data.ByteString.Lazy as L
+import qualified Data.ByteString as B
 import Data.Binary.Get
 import Data.Word
 import Data.Bits
 
-data Header = Header {
-    headerSize :: Int,
+import Crypto
 
-    archiveDataLength :: Int,
-    blockSize :: Int
+data Header = Header {
+    headerSize :: Word,
+    archiveDataLength :: Word,
+    blockSize :: Word,
+    hashTableLength :: Word,
+    hashTableOffset :: Word,
+    hashTableCompressedSize :: Word,
+    blockTableLength :: Word,
+    blockTableOffset :: Word,
+    blockTableCompressedSize :: Word,
+    highBlockTableOffset :: Word,
+    highBlockTableCompressedSize :: Word
 } deriving (Show)
+
+-- TODO: handle MPQ Data in middle
+archiveDataOffset = 0
 
 parseHeader :: Get Header
 parseHeader = do
     signature <- getWord32le >>= return . fromIntegral
-    let archiveDataOffset = 0
-
     -- TODO: check for MPQ user data presence
 
     headerSize <- getWord32le >>= return . fromIntegral
@@ -52,12 +63,10 @@ parseHeader = do
     let highBlockTableSize = if highBlockTableOffset /= 0 then 4 * blockTableLength else 0
 
     -- TODO: check for strong signature presence
-    
-    readHashTable hashTableLength hashTableOffsetV2 hashTableCompressedSizeV4
 
-    return $ Header headerSize archiveDataLengthV3 blockSize
+    return $ Header headerSize archiveDataLengthV3 blockSize hashTableLength hashTableOffsetV2 hashTableCompressedSizeV4 blockTableLength blockTableOffsetV2 blockTableCompressedSize highBlockTableOffset highBlockTableCompressedSize
 
-parseV2 :: Int -> Int -> Int -> Get (Int, Int, Int, Int)
+parseV2 :: Word -> Word -> Word -> Get (Word, Word, Word, Word)
 parseV2 hashTableOffsetV1 blockTableOffsetV1 blockTableLength = do
     highBlockTableOffset <- getWord64le >>= return . fromIntegral
     let highBlockTableCompressedSize = if highBlockTableOffset /= 0 then 4 * blockTableLength else 0
@@ -68,14 +77,14 @@ parseV2 hashTableOffsetV1 blockTableOffsetV1 blockTableLength = do
 
     return (hashTableOffsetV2, blockTableOffsetV2, highBlockTableOffset, highBlockTableCompressedSize)
 
-parseV3 :: Get Int
+parseV3 :: Get Word
 parseV3 = do
     archiveDataLength <- getWord64le >>= return . fromIntegral
     skip 8 -- enhancedBlockTableOffset
     skip 8 -- enhancedHashTableOffset
     return archiveDataLength
 
-parseV4 :: Get (Int, Int, Int)
+parseV4 :: Get (Word, Word, Word)
 parseV4 = do
     hashTableCompressedSize <- getWord64le >>= return . fromIntegral
     blockTableCompressedSize <- getWord64le >>= return . fromIntegral
@@ -86,17 +95,27 @@ parseV4 = do
     skip $ 6 * 16 -- hashes
     return (hashTableCompressedSize, blockTableCompressedSize, highBlockTableCompressedSize)
 
-hash :: String -> Int -> Int
-hash text hashOffset = 0
+parseHashTable :: Header -> Get [ Word ]
+parseHashTable header = do
+    skip $ archiveDataOffset + (fromIntegral $ hashTableOffset header)
+    ret <- parseEncryptedUInt32Table (hashTableLength header) (hashTableCompressedSize header) (hash "(hash table)" 0x300)
+    return ret
 
-readHashTable :: Int -> Int -> Int -> Get ()
-readHashTable hashTableLength hashTableOffset hashTableCompressedSize = do
-    readEncryptedUInt32Table hashTableLength hashTableOffset hashTableCompressedSize (hash "(hash table)" 0x300)
+parseEncryptedUInt32Table :: Word -> Word -> Word -> Get [ Word ]
+parseEncryptedUInt32Table tableLength dataLength hashValue = do
+    let uintCount = tableLength `shiftL` 2
+    -- TODO: support compressed
+    bytes <- getByteString $ fromIntegral dataLength 
+    -- TODO: handle big endian
+    return $ decrypt hashValue $ cs2ws $ B.unpack bytes
+        where cs2ws [] = []
+              cs2ws (a:b:c:d:rest) = (fromIntegral a .|. (fromIntegral b `shift` 8) .|. (fromIntegral c `shift` 16) .|. (fromIntegral d `shift` 24)) : (cs2ws rest)
 
-readEncryptedUInt32Table :: Int -> Int -> Int -> Int -> Get ()
-readEncryptedUInt32Table tableLength tableOffset dataLength hashValue = do
-    return ()
-
+parseFile :: String -> IO ()
 parseFile path = do
     contents <- L.readFile path
-    print $ runGet parseHeader contents
+    let header = runGet parseHeader contents
+    print header
+    print $ runGet (parseHashTable header) contents 
+
+main = parseFile "test.mpq"
