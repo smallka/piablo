@@ -6,7 +6,14 @@ import Data.Bits
 
 import Crypto
 
-data Header = Header {
+data MpqHashEntry = MpqHashEntry {
+    hashA :: Word,
+    hashB :: Word,
+    locale :: Int,
+    block :: Int
+} deriving (Show)
+
+data MpqHeader = MpqHeader {
     headerSize :: Word,
     archiveDataLength :: Word,
     blockSize :: Word,
@@ -23,7 +30,7 @@ data Header = Header {
 -- TODO: handle MPQ Data in middle
 archiveDataOffset = 0
 
-parseHeader :: Get Header
+parseHeader :: Get MpqHeader
 parseHeader = do
     signature <- getWord32le >>= return . fromIntegral
     -- TODO: check for MPQ user data presence
@@ -64,7 +71,7 @@ parseHeader = do
 
     -- TODO: check for strong signature presence
 
-    return $ Header headerSize archiveDataLengthV3 blockSize hashTableLength hashTableOffsetV2 hashTableCompressedSizeV4 blockTableLength blockTableOffsetV2 blockTableCompressedSize highBlockTableOffset highBlockTableCompressedSize
+    return $ MpqHeader headerSize archiveDataLengthV3 blockSize hashTableLength hashTableOffsetV2 hashTableCompressedSizeV4 blockTableLength blockTableOffsetV2 blockTableCompressedSize highBlockTableOffset highBlockTableCompressedSize
 
 parseV2 :: Word -> Word -> Word -> Get (Word, Word, Word, Word)
 parseV2 hashTableOffsetV1 blockTableOffsetV1 blockTableLength = do
@@ -95,11 +102,13 @@ parseV4 = do
     skip $ 6 * 16 -- hashes
     return (hashTableCompressedSize, blockTableCompressedSize, highBlockTableCompressedSize)
 
-parseHashTable :: Header -> Get [ Word ]
+parseHashTable :: MpqHeader -> Get [ MpqHashEntry ]
 parseHashTable header = do
     skip $ archiveDataOffset + (fromIntegral $ hashTableOffset header)
-    ret <- parseEncryptedUInt32Table (hashTableLength header) (hashTableCompressedSize header) (hash "(hash table)" 0x300)
-    return ret
+    words <- parseEncryptedUInt32Table (hashTableLength header) (hashTableCompressedSize header) (hash "(hash table)" 0x300)
+    return $ buildEntries words
+        where buildEntries [] = []
+              buildEntries (hashA : hashB : locale : block : rest) = MpqHashEntry hashA hashB (fromIntegral locale) (fromIntegral block) : (buildEntries rest)
 
 parseEncryptedUInt32Table :: Word -> Word -> Word -> Get [ Word ]
 parseEncryptedUInt32Table tableLength dataLength hashValue = do
@@ -111,11 +120,21 @@ parseEncryptedUInt32Table tableLength dataLength hashValue = do
         where cs2ws [] = []
               cs2ws (a:b:c:d:rest) = (fromIntegral a .|. (fromIntegral b `shift` 8) .|. (fromIntegral c `shift` 16) .|. (fromIntegral d `shift` 24)) : (cs2ws rest)
 
+findBlock :: [ MpqHashEntry ] -> String -> Int
+findBlock hashEntries filename =
+    searchHash new_table
+        where (a, b) = splitAt (fromIntegral (hash filename 0) `mod` (length hashEntries)) hashEntries
+              new_table = b ++ a
+              -- TODO: locale
+              searchHash [] = -1
+              searchHash (x:xs) = if hashA x == (hash filename 0x100) && hashB x == (hash filename 0x200) then (block x) else searchHash xs
+
 parseFile :: String -> IO ()
 parseFile path = do
     contents <- L.readFile path
     let header = runGet parseHeader contents
     print header
-    print $ runGet (parseHashTable header) contents 
+    let hashEntries = runGet (parseHashTable header) contents 
+    print $ findBlock hashEntries "(listfile)"
 
 main = parseFile "test.mpq"
