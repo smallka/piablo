@@ -3,15 +3,9 @@ import qualified Data.ByteString as B
 import Data.Binary.Get
 import Data.Word
 import Data.Bits
+import Control.Monad (when)
 
 import Crypto
-
-data MpqHashEntry = MpqHashEntry {
-    hashA :: Word,
-    hashB :: Word,
-    locale :: Int,
-    block :: Int
-} deriving (Show)
 
 data MpqHeader = MpqHeader {
     headerSize :: Word,
@@ -29,6 +23,26 @@ data MpqHeader = MpqHeader {
 
 -- TODO: handle MPQ Data in middle
 archiveDataOffset = 0
+
+data MpqHashEntry = MpqHashEntry {
+    hashA :: Word,
+    hashB :: Word,
+    locale :: Int,
+    block :: Int
+} deriving (Show)
+
+isEntryInvalid :: MpqHashEntry -> Bool
+isEntryInvalid entry = block entry == -1 || hashA entry == 0xFFFFFFFF || hashB entry == 0xFFFFFFFF
+
+hashMatch :: MpqHashEntry -> String -> Bool
+hashMatch entry filename = hashA entry == (hash filename 0x100) && hashB entry == (hash filename 0x200)
+
+data MpqBlockEntry = MpqBlockEntry {
+    offset :: Word,
+    compressedSize :: Word,
+    uncompressedSize :: Word,
+    flags :: Word
+} deriving (Show)
 
 parseHeader :: Get MpqHeader
 parseHeader = do
@@ -102,39 +116,62 @@ parseV4 = do
     skip $ 6 * 16 -- hashes
     return (hashTableCompressedSize, blockTableCompressedSize, highBlockTableCompressedSize)
 
-parseHashTable :: MpqHeader -> Get [ MpqHashEntry ]
-parseHashTable header = do
+readHashTable :: MpqHeader -> Get [ MpqHashEntry ]
+readHashTable header = do
     skip $ archiveDataOffset + (fromIntegral $ hashTableOffset header)
-    words <- parseEncryptedUInt32Table (hashTableLength header) (hashTableCompressedSize header) (hash "(hash table)" 0x300)
+    words <- readEncryptedUInt32Table (hashTableLength header) (hashTableCompressedSize header) (hash "(hash table)" 0x300)
     return $ buildEntries words
         where buildEntries [] = []
               buildEntries (hashA : hashB : locale : block : rest) = MpqHashEntry hashA hashB (fromIntegral locale) (fromIntegral block) : (buildEntries rest)
 
-parseEncryptedUInt32Table :: Word -> Word -> Word -> Get [ Word ]
-parseEncryptedUInt32Table tableLength dataLength hashValue = do
+readBlockTable :: MpqHeader -> Get [ MpqBlockEntry ]
+readBlockTable header = do
+    skip $ archiveDataOffset + (fromIntegral $ blockTableOffset header)
+    words <- readEncryptedUInt32Table (blockTableLength header) (blockTableCompressedSize header) (hash "(block table)" 0x300)
+    when (highBlockTableOffset header /= 0 && highBlockTableCompressedSize header /= 0) $ fail "high table not supported"
+    -- TODO: file index and count
+    return $ buildEntries words
+        where buildEntries [] = []
+              buildEntries (offset : compressedSize : uncompressedSize : flags : rest) = MpqBlockEntry offset compressedSize uncompressedSize flags : (buildEntries rest)
+
+readEncryptedUInt32Table :: Word -> Word -> Word -> Get [ Word ]
+readEncryptedUInt32Table tableLength dataLength hashValue = do
     let uintCount = tableLength `shiftL` 2
-    -- TODO: support compressed
+    when (uintCount * 4 > dataLength) $ fail "compressed not supported"
     bytes <- getByteString $ fromIntegral dataLength 
-    -- TODO: handle big endian
+    -- TODO: bit order depends only on the machine where encryption is performed
     return $ decrypt hashValue $ cs2ws $ B.unpack bytes
         where cs2ws [] = []
               cs2ws (a:b:c:d:rest) = (fromIntegral a .|. (fromIntegral b `shift` 8) .|. (fromIntegral c `shift` 16) .|. (fromIntegral d `shift` 24)) : (cs2ws rest)
 
 findBlock :: [ MpqHashEntry ] -> String -> Int
 findBlock hashEntries filename =
-    searchHash new_table
+    find new_table
         where (a, b) = splitAt (fromIntegral (hash filename 0) `mod` (length hashEntries)) hashEntries
               new_table = b ++ a
               -- TODO: locale
-              searchHash [] = -1
-              searchHash (x:xs) = if hashA x == (hash filename 0x100) && hashB x == (hash filename 0x200) then (block x) else searchHash xs
+              find [] = -1
+              find (x:xs) = if isEntryInvalid x then -1 else if hashMatch x filename then (block x) else find xs
+
+findMultiBlock :: [ MpqHashEntry ] -> String -> [ Int ]
+findMultiBlock hashEntries filename =
+    findMulti new_table
+        where (a, b) = splitAt (fromIntegral (hash filename 0) `mod` (length hashEntries)) hashEntries
+              new_table = b ++ a
+              -- TODO: locale
+              findMulti [] = []
+              findMulti (x:xs) = if isEntryInvalid x then [] else if hashMatch x filename then (block x):(findMulti xs) else findMulti xs
 
 parseFile :: String -> IO ()
 parseFile path = do
     contents <- L.readFile path
     let header = runGet parseHeader contents
     print header
-    let hashEntries = runGet (parseHashTable header) contents 
+    let hashEntries = runGet (readHashTable header) contents 
+    print hashEntries
+    let blockEntries = runGet (readBlockTable header) contents
+    print blockEntries
     print $ findBlock hashEntries "(listfile)"
+    print $ findMultiBlock hashEntries "(listfile)"
 
 main = parseFile "test.mpq"
