@@ -88,7 +88,6 @@ parseHeader = do
         then parseV2 mpqVersion >>= return . Just
         else return Nothing
 
-    -- TODO: check for strong signature presence
     return $ MpqHeader headerSize archiveDataLength mpqVersion blockSize hashTableOffset blockTableOffset hashTableLength blockTableLength v2
 
 parseV2 :: Word -> Get MpqHeaderV2
@@ -126,6 +125,37 @@ parseV4 = do
     skip $ 6 * 16 -- hashes
     return $ MpqHeaderV4 hashTableCompressedSize blockTableCompressedSize highBlockTableCompressedSize ebtCompressedSize ehtCompressedSize rawChunkSize
 
+checkHeader :: MpqHeader -> IO ()
+checkHeader header = do
+    when (hashTableLength header * 16 /= (blockTableOffset header) - (hashTableOffset header)) $ fail "compressed hash table not supported"
+    when (blockTableLength header * 16 /= (archiveDataLength header) - (blockTableOffset header)) $ fail "compressed block table not supported"
+    case v2 header of
+        Just headerV2 -> checkV2 header headerV2
+        Nothing -> return ()
+    -- TODO: check for strong signature presence
+
+checkV2 :: MpqHeader -> MpqHeaderV2 -> IO ()
+checkV2 base v2 = do
+    when (highBlockTableOffset v2 /= 0) $ fail "Hi-Block Table not supported"
+    when (hashTableOffsetHigh v2 /= 0) $ fail "hash Table High bit not supported"
+    when (blockTableOffsetHigh v2 /= 0) $ fail "block Table High bit not supported"
+    case v3 v2 of
+        Just headerV3 -> checkV3 base headerV3
+        Nothing -> return ()
+
+checkV3 :: MpqHeader -> MpqHeaderV3 -> IO ()
+checkV3 base v3 = do
+    when (archiveDataLength64 v3 /= archiveDataLength base) $ fail "64-bit archive size not supported"
+    case v4 v3 of
+        Just headerV4 -> checkV4 base headerV4
+        Nothing -> return ()
+
+checkV4 :: MpqHeader -> MpqHeaderV4 -> IO ()
+checkV4 base v4 = do
+    when (hashTableCompressedSize v4 /= (hashTableLength base * 16)) $ fail "compressed hash table not supported"
+    when (blockTableCompressedSize v4 /= (blockTableLength base * 16)) $ fail "compressed block table not supported"
+    when (highBlockTableCompressedSize v4 /= 0) $ fail "Hi-Block Table not supported"
+
 readHashTable :: MpqHeader -> Get [ MpqHashEntry ]
 readHashTable header = do
     skip $ archiveDataOffset + (fromIntegral $ hashTableOffset header)
@@ -146,8 +176,7 @@ readBlockTable header = do
 -- TODO: make it pure
 readEncryptedUInt32Table :: Word -> Word -> Get [ Word ]
 readEncryptedUInt32Table tableLength hashValue = do
-    let unitCount = tableLength `shiftL` 2
-    let dataLength = unitCount * 4
+    let dataLength = tableLength * 16
     bytes <- getByteString $ fromIntegral dataLength
     -- TODO: bit order depends only on the machine where encryption is performed
     return $ decrypt hashValue . cs2ws $ B.unpack bytes
@@ -183,6 +212,7 @@ parseFile :: String -> IO ()
 parseFile path = do
     contents <- L.readFile path
     let header = runGet parseHeader contents
+    checkHeader header
     print header
     let hashEntries = runGet (readHashTable header) contents
     let blockEntries = runGet (readBlockTable header) contents
