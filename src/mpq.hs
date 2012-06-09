@@ -10,15 +10,36 @@ import Crypto (hash, decrypt)
 data MpqHeader = MpqHeader {
     headerSize :: Word,
     archiveDataLength :: Word,
+    mpqVersion :: Word,
     blockSize :: Word,
-    hashTableLength :: Word,
     hashTableOffset :: Word,
-    hashTableCompressedSize :: Word,
-    blockTableLength :: Word,
     blockTableOffset :: Word,
-    blockTableCompressedSize :: Word,
+    hashTableLength :: Word,
+    blockTableLength :: Word,
+    v2 :: Maybe MpqHeaderV2
+} deriving (Show)
+
+data MpqHeaderV2 = MpqHeaderV2 {
     highBlockTableOffset :: Word,
-    highBlockTableCompressedSize :: Word
+    hashTableOffsetHigh :: Word,
+    blockTableOffsetHigh :: Word,
+    v3 :: Maybe MpqHeaderV3
+} deriving (Show)
+
+data MpqHeaderV3 = MpqHeaderV3 {
+    archiveDataLength64 :: Word,
+    ebtOffset :: Word,
+    ehtOffset :: Word,
+    v4 :: Maybe MpqHeaderV4
+} deriving (Show)
+
+data MpqHeaderV4 = MpqHeaderV4 {
+    hashTableCompressedSize :: Word,
+    blockTableCompressedSize :: Word,
+    highBlockTableCompressedSize :: Word,
+    ebtCompressedSize :: Word,
+    ehtCompressedSize :: Word,
+    rawChunkSize :: Word
 } deriving (Show)
 
 -- TODO: handle MPQ Data in middle
@@ -44,100 +65,71 @@ data MpqBlockEntry = MpqBlockEntry {
     flags :: Word
 } deriving (Show)
 
+gw16 = getWord16le >>= return . fromIntegral
+gw32 = getWord32le >>= return . fromIntegral
+gw64 = getWord64le >>= return . fromIntegral
+
 parseHeader :: Get MpqHeader
 parseHeader = do
-    signature <- getWord32le >>= return . fromIntegral
-    -- TODO: check for MPQ user data presence
-    headerSize <- getWord32le >>= return . fromIntegral
-    archiveDataLengthV1 <- getWord32le >>= return . fromIntegral
-    mpqVersion <- getWord16le >>= return . fromIntegral
-    blockSize <- getWord16le >>= return . (shift 0x200) . fromIntegral
-    hashTableOffsetV1 <- getWord32le >>= return . fromIntegral
-    blockTableOffsetV1 <- getWord32le >>= return . fromIntegral
-    hashTableLength <- getWord32le >>= return . fromIntegral
-    blockTableLength <- getWord32le >>= return . fromIntegral
+    signature <- gw32
+    when (signature == 0x1B51504D) $ fail "user data not supported"
+    when (signature /= 0x1A51504D) $ fail "invalid archive signature"
 
-    hashTableCompressedSize <- return $
-        let delta = blockTableOffsetV1 - hashTableOffsetV1
-            size = 16 * hashTableLength
-        in if (delta > 0 && delta < size)
-            then delta
-            else size
-    let blockTableCompressedSize = 16 * blockTableLength
+    headerSize <- gw32
+    archiveDataLength <- gw32
+    mpqVersion <- gw16
+    blockSize <- gw16 >>= return . (shift 0x200) . fromIntegral
+    hashTableOffset <- gw32
+    blockTableOffset <- gw32
+    hashTableLength <- gw32
+    blockTableLength <- gw32
 
-    (hashTableOffsetV2, blockTableOffsetV2, highBlockTableOffset, highBlockTableCompressedSize) <- if mpqVersion >= 1
-        then parseV2 hashTableOffsetV1 blockTableOffsetV1 blockTableLength
-        else return (hashTableOffsetV1, blockTableOffsetV1, 0, 0)
-
-    archiveDataLengthV3 <- if mpqVersion >= 2 && headerSize >= 0x44
-        then parseV3
-        else return $ if highBlockTableOffset > hashTableOffsetV2
-            then if highBlockTableOffset > blockTableOffsetV2
-                then highBlockTableOffset + 4 * blockTableLength
-                else blockTableOffsetV2 + 16 * blockTableLength
-            else hashTableOffsetV2 + 16 * hashTableLength
-
-    (hashTableCompressedSizeV4, blockTableCompressedSizeV4, highBlockTableCompressedSize) <- if mpqVersion >= 3
-        then parseV4
-        else return (
-            hashTableCompressedSize,
-            blockTableCompressedSize,
-            if highBlockTableOffset > 0
-                then 4 * blockTableLength
-                else 0)
-
-    let hashTableSize = 16 * hashTableLength
-    let blockTableSize = 16 * blockTableLength
-    let highBlockTableSize = if highBlockTableOffset /= 0
-        then 4 * blockTableLength
-        else 0
+    v2 <- if mpqVersion >= 1
+        then parseV2 mpqVersion >>= return . Just
+        else return Nothing
 
     -- TODO: check for strong signature presence
+    return $ MpqHeader headerSize archiveDataLength mpqVersion blockSize hashTableOffset blockTableOffset hashTableLength blockTableLength v2
 
-    return $ MpqHeader headerSize archiveDataLengthV3 blockSize hashTableLength hashTableOffsetV2 hashTableCompressedSizeV4 blockTableLength blockTableOffsetV2 blockTableCompressedSize highBlockTableOffset highBlockTableCompressedSize
+parseV2 :: Word -> Get MpqHeaderV2
+parseV2 mpqVersion = do
+    highBlockTableOffset <- gw64
+    hashTableOffsetHigh <- gw16
+    blockTableOffsetHigh <- gw16
 
-parseV2 :: Word -> Word -> Word -> Get (Word, Word, Word, Word)
-parseV2 hashTableOffsetV1 blockTableOffsetV1 blockTableLength = do
-    highBlockTableOffset <- getWord64le >>= return . fromIntegral
-    let highBlockTableCompressedSize = if highBlockTableOffset /= 0
-        then 4 * blockTableLength
-        else 0
-    hashTableOffsetHigh <- getWord16le >>= return . fromIntegral
-    blockTableOffsetHigh <- getWord16le >>= return . fromIntegral
-    let hashTableOffsetV2 = hashTableOffsetV1 `xor` (hashTableOffsetHigh `shift` 32)
-    let blockTableOffsetV2 = blockTableOffsetV1 `xor` (blockTableOffsetHigh `shift` 32)
+    v3 <- if mpqVersion >= 2
+        then parseV3 mpqVersion >>= return . Just
+        else return Nothing
 
-    return (
-        hashTableOffsetV2,
-        blockTableOffsetV2,
-        highBlockTableOffset,
-        highBlockTableCompressedSize)
+    return $ MpqHeaderV2 highBlockTableOffset hashTableOffsetHigh blockTableOffsetHigh v3
 
-parseV3 :: Get Word
-parseV3 = do
-    archiveDataLength <- getWord64le >>= return . fromIntegral
-    skip 8 -- enhancedBlockTableOffset
-    skip 8 -- enhancedHashTableOffset
-    return archiveDataLength
+parseV3 :: Word -> Get MpqHeaderV3
+parseV3 mpqVersion = do
+    archiveDataLength64 <- gw64
+    ebtOffset <- gw64
+    ehtOffset <- gw64
 
-parseV4 :: Get (Word, Word, Word)
+    v4 <- if mpqVersion >= 3
+        then parseV4 >>= return . Just
+        else return Nothing
+
+    return $ MpqHeaderV3 archiveDataLength64 ebtOffset ehtOffset v4
+
+parseV4 :: Get MpqHeaderV4
 parseV4 = do
-    hashTableCompressedSize <- getWord64le >>= return . fromIntegral
-    blockTableCompressedSize <- getWord64le >>= return . fromIntegral
-    highBlockTableCompressedSize <- getWord64le >>= return . fromIntegral
-    skip 8 -- enhancedHashTableCompressedSize
-    skip 8 -- enhancedBlockTableCompressedSize
-    skip 4 -- rawChunkSize
+    hashTableCompressedSize <- gw64
+    blockTableCompressedSize <- gw64
+    highBlockTableCompressedSize <- gw64
+    ebtCompressedSize <- gw64
+    ehtCompressedSize <- gw64
+    rawChunkSize <- gw32
     skip $ 6 * 16 -- hashes
-    return (
-        hashTableCompressedSize,
-        blockTableCompressedSize,
-        highBlockTableCompressedSize)
+    return $ MpqHeaderV4 hashTableCompressedSize blockTableCompressedSize highBlockTableCompressedSize ebtCompressedSize ehtCompressedSize rawChunkSize
 
 readHashTable :: MpqHeader -> Get [ MpqHashEntry ]
 readHashTable header = do
     skip $ archiveDataOffset + (fromIntegral $ hashTableOffset header)
-    words <- readEncryptedUInt32Table (hashTableLength header) (hashTableCompressedSize header) (hash "(hash table)" 0x300)
+    words <- readEncryptedUInt32Table (hashTableLength header) (hash "(hash table)" 0x300)
     return $ buildEntries words
         where buildEntries [] = []
               buildEntries (hashA : hashB : locale : block : rest) = MpqHashEntry hashA hashB (fromIntegral locale) (fromIntegral block) : (buildEntries rest)
@@ -145,17 +137,17 @@ readHashTable header = do
 readBlockTable :: MpqHeader -> Get [ MpqBlockEntry ]
 readBlockTable header = do
     skip $ archiveDataOffset + (fromIntegral $ blockTableOffset header)
-    words <- readEncryptedUInt32Table (blockTableLength header) (blockTableCompressedSize header) (hash "(block table)" 0x300)
-    when (highBlockTableOffset header /= 0 && highBlockTableCompressedSize header /= 0) $ fail "high table not supported"
+    words <- readEncryptedUInt32Table (blockTableLength header) (hash "(block table)" 0x300)
     -- TODO: file index and count
     return $ buildEntries words
         where buildEntries [] = []
               buildEntries (offset : compressedSize : uncompressedSize : flags : rest) = MpqBlockEntry offset compressedSize uncompressedSize flags : (buildEntries rest)
 
-readEncryptedUInt32Table :: Word -> Word -> Word -> Get [ Word ]
-readEncryptedUInt32Table tableLength dataLength hashValue = do
-    let uintCount = tableLength `shiftL` 2
-    when (uintCount * 4 > dataLength) $ fail "compressed not supported"
+-- TODO: make it pure
+readEncryptedUInt32Table :: Word -> Word -> Get [ Word ]
+readEncryptedUInt32Table tableLength hashValue = do
+    let unitCount = tableLength `shiftL` 2
+    let dataLength = unitCount * 4
     bytes <- getByteString $ fromIntegral dataLength
     -- TODO: bit order depends only on the machine where encryption is performed
     return $ decrypt hashValue . cs2ws $ B.unpack bytes
@@ -193,9 +185,7 @@ parseFile path = do
     let header = runGet parseHeader contents
     print header
     let hashEntries = runGet (readHashTable header) contents
-    print hashEntries
     let blockEntries = runGet (readBlockTable header) contents
-    print blockEntries
     print $ findBlock hashEntries "(listfile)"
     print $ findMultiBlock hashEntries "(listfile)"
 

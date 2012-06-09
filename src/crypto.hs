@@ -10,8 +10,8 @@ import Data.Bits
 import Data.Char
 
 build1D :: Word -> Word -> Word -> [ Word ]
-build1D 0 q r = []
-build1D len q r = seed : (build1D (len - 1) new_q new_r)
+build1D 0 _ _ = []
+build1D len _ r = seed : (build1D (len - 1) new_q new_r)
     where mid_r = (r * 125 + 3) `mod` 0x2AAAAB
           mid_seed = (mid_r .&. 0xFFFF) `shiftL` 16
           (new_q, new_r) = divMod (mid_r * 125 + 3) 0x2AAAAB
@@ -19,8 +19,8 @@ build1D len q r = seed : (build1D (len - 1) new_q new_r)
 
 split2D :: [ Word ] -> [ [ Word ] ]
 split2D [] = []
-split2D all = first_row : (split2D left)
-    where (first_row, left) = splitAt 5 all
+split2D wordList = first_row : (split2D left)
+    where (first_row, left) = splitAt 5 wordList
 
 hashTable :: [ Word ]
 hashTable = concat . transpose . split2D $ build1D 0x500 0x100001 0x100001
@@ -35,8 +35,8 @@ hash text hashOffset = fst $ foldl calc_hash (0x7FED7FED, 0xEEEEEEEE) bytes
                     new_seed = seed + new_value + (seed `shiftL` 5) + (fromIntegral b) + 3
 
 decrypt :: Word -> [ Word ] -> [ Word ]
-decrypt hashValue words = plains
-    where (plains, _, _) = foldl decrypt_hash ([], hashValue, 0xEEEEEEEE) words
+decrypt hashValue encrypted = plains
+    where (plains, _, _) = foldl decrypt_hash ([], hashValue, 0xEEEEEEEE) encrypted
           decrypt_hash (decrypted, value, temp) word = (decrypted ++ [buffer], new_value, new_temp)
               where temp' = temp + (hashTable !! (0x400 + (fromIntegral value .&. 0xFF)))
                     buffer = word `xor` (temp' + value)
