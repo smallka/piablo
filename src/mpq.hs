@@ -5,7 +5,7 @@ import Data.Word
 import Data.Bits
 import Control.Monad (when)
 
-import Crypto
+import Crypto (hash, decrypt)
 
 data MpqHeader = MpqHeader {
     headerSize :: Word,
@@ -48,7 +48,6 @@ parseHeader :: Get MpqHeader
 parseHeader = do
     signature <- getWord32le >>= return . fromIntegral
     -- TODO: check for MPQ user data presence
-
     headerSize <- getWord32le >>= return . fromIntegral
     archiveDataLengthV1 <- getWord32le >>= return . fromIntegral
     mpqVersion <- getWord16le >>= return . fromIntegral
@@ -58,9 +57,12 @@ parseHeader = do
     hashTableLength <- getWord32le >>= return . fromIntegral
     blockTableLength <- getWord32le >>= return . fromIntegral
 
-    let hashTableCompressedSize = let delta = blockTableOffsetV1 - hashTableOffsetV1
-                                      size = 16 * hashTableLength
-               in if (delta > 0 && delta < size) then delta else size
+    hashTableCompressedSize <- return $
+        let delta = blockTableOffsetV1 - hashTableOffsetV1
+            size = 16 * hashTableLength
+        in if (delta > 0 && delta < size)
+            then delta
+            else size
     let blockTableCompressedSize = 16 * blockTableLength
 
     (hashTableOffsetV2, blockTableOffsetV2, highBlockTableOffset, highBlockTableCompressedSize) <- if mpqVersion >= 1
@@ -69,19 +71,26 @@ parseHeader = do
 
     archiveDataLengthV3 <- if mpqVersion >= 2 && headerSize >= 0x44
         then parseV3
-        else return (if highBlockTableOffset > hashTableOffsetV2
+        else return $ if highBlockTableOffset > hashTableOffsetV2
             then if highBlockTableOffset > blockTableOffsetV2
                 then highBlockTableOffset + 4 * blockTableLength
                 else blockTableOffsetV2 + 16 * blockTableLength
-            else hashTableOffsetV2 + 16 * hashTableLength)
-    
+            else hashTableOffsetV2 + 16 * hashTableLength
+
     (hashTableCompressedSizeV4, blockTableCompressedSizeV4, highBlockTableCompressedSize) <- if mpqVersion >= 3
         then parseV4
-        else return (hashTableCompressedSize, blockTableCompressedSize, if highBlockTableOffset > 0 then 4 * blockTableLength else 0)
+        else return (
+            hashTableCompressedSize,
+            blockTableCompressedSize,
+            if highBlockTableOffset > 0
+                then 4 * blockTableLength
+                else 0)
 
     let hashTableSize = 16 * hashTableLength
     let blockTableSize = 16 * blockTableLength
-    let highBlockTableSize = if highBlockTableOffset /= 0 then 4 * blockTableLength else 0
+    let highBlockTableSize = if highBlockTableOffset /= 0
+        then 4 * blockTableLength
+        else 0
 
     -- TODO: check for strong signature presence
 
@@ -90,13 +99,19 @@ parseHeader = do
 parseV2 :: Word -> Word -> Word -> Get (Word, Word, Word, Word)
 parseV2 hashTableOffsetV1 blockTableOffsetV1 blockTableLength = do
     highBlockTableOffset <- getWord64le >>= return . fromIntegral
-    let highBlockTableCompressedSize = if highBlockTableOffset /= 0 then 4 * blockTableLength else 0
+    let highBlockTableCompressedSize = if highBlockTableOffset /= 0
+        then 4 * blockTableLength
+        else 0
     hashTableOffsetHigh <- getWord16le >>= return . fromIntegral
     blockTableOffsetHigh <- getWord16le >>= return . fromIntegral
     let hashTableOffsetV2 = hashTableOffsetV1 `xor` (hashTableOffsetHigh `shift` 32)
     let blockTableOffsetV2 = blockTableOffsetV1 `xor` (blockTableOffsetHigh `shift` 32)
 
-    return (hashTableOffsetV2, blockTableOffsetV2, highBlockTableOffset, highBlockTableCompressedSize)
+    return (
+        hashTableOffsetV2,
+        blockTableOffsetV2,
+        highBlockTableOffset,
+        highBlockTableCompressedSize)
 
 parseV3 :: Get Word
 parseV3 = do
@@ -114,7 +129,10 @@ parseV4 = do
     skip 8 -- enhancedBlockTableCompressedSize
     skip 4 -- rawChunkSize
     skip $ 6 * 16 -- hashes
-    return (hashTableCompressedSize, blockTableCompressedSize, highBlockTableCompressedSize)
+    return (
+        hashTableCompressedSize,
+        blockTableCompressedSize,
+        highBlockTableCompressedSize)
 
 readHashTable :: MpqHeader -> Get [ MpqHashEntry ]
 readHashTable header = do
@@ -138,36 +156,43 @@ readEncryptedUInt32Table :: Word -> Word -> Word -> Get [ Word ]
 readEncryptedUInt32Table tableLength dataLength hashValue = do
     let uintCount = tableLength `shiftL` 2
     when (uintCount * 4 > dataLength) $ fail "compressed not supported"
-    bytes <- getByteString $ fromIntegral dataLength 
+    bytes <- getByteString $ fromIntegral dataLength
     -- TODO: bit order depends only on the machine where encryption is performed
-    return $ decrypt hashValue $ cs2ws $ B.unpack bytes
+    return $ decrypt hashValue . cs2ws $ B.unpack bytes
         where cs2ws [] = []
               cs2ws (a:b:c:d:rest) = (fromIntegral a .|. (fromIntegral b `shift` 8) .|. (fromIntegral c `shift` 16) .|. (fromIntegral d `shift` 24)) : (cs2ws rest)
 
 findBlock :: [ MpqHashEntry ] -> String -> Int
-findBlock hashEntries filename =
-    find new_table
-        where (a, b) = splitAt (fromIntegral (hash filename 0) `mod` (length hashEntries)) hashEntries
-              new_table = b ++ a
-              -- TODO: locale
-              find [] = -1
-              find (x:xs) = if isEntryInvalid x then -1 else if hashMatch x filename then (block x) else find xs
+findBlock hashEntries filename = find new_table
+    where start = fromIntegral (hash filename 0) `mod` (length hashEntries)
+          (a, b) = splitAt start hashEntries
+          new_table = b ++ a
+          -- TODO: locale
+          find [] = -1
+          find (x:xs) = if isEntryInvalid x
+              then -1
+              else if hashMatch x filename
+                  then (block x)
+                  else find xs
 
 findMultiBlock :: [ MpqHashEntry ] -> String -> [ Int ]
-findMultiBlock hashEntries filename =
-    findMulti new_table
-        where (a, b) = splitAt (fromIntegral (hash filename 0) `mod` (length hashEntries)) hashEntries
-              new_table = b ++ a
-              -- TODO: locale
-              findMulti [] = []
-              findMulti (x:xs) = if isEntryInvalid x then [] else if hashMatch x filename then (block x):(findMulti xs) else findMulti xs
+findMultiBlock hashEntries filename = findMulti new_table
+    where (a, b) = splitAt (fromIntegral (hash filename 0) `mod` (length hashEntries)) hashEntries
+          new_table = b ++ a
+          -- TODO: locale
+          findMulti [] = []
+          findMulti (x:xs) = if isEntryInvalid x
+              then []
+              else if hashMatch x filename
+                  then (block x):(findMulti xs)
+                  else findMulti xs
 
 parseFile :: String -> IO ()
 parseFile path = do
     contents <- L.readFile path
     let header = runGet parseHeader contents
     print header
-    let hashEntries = runGet (readHashTable header) contents 
+    let hashEntries = runGet (readHashTable header) contents
     print hashEntries
     let blockEntries = runGet (readBlockTable header) contents
     print blockEntries
