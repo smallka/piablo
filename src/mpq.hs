@@ -1,9 +1,11 @@
 import qualified Data.ByteString.Lazy as L
+import qualified Data.ByteString.Lazy.Char8 as L8
 import qualified Data.ByteString as B
 import Data.Binary.Get
 import Data.Word
 import Data.Bits
 import Control.Monad (when)
+import Codec.Compression.Zlib (decompress)
 
 import Crypto (hash, decrypt)
 
@@ -44,26 +46,6 @@ data MpqHeaderV4 = MpqHeaderV4 {
 
 -- TODO: handle MPQ Data in middle
 archiveDataOffset = 0
-
-data MpqHashEntry = MpqHashEntry {
-    hashA :: Word,
-    hashB :: Word,
-    locale :: Int,
-    block :: Int
-} deriving (Show)
-
-isEntryInvalid :: MpqHashEntry -> Bool
-isEntryInvalid entry = block entry == -1 || hashA entry == 0xFFFFFFFF || hashB entry == 0xFFFFFFFF
-
-hashMatch :: MpqHashEntry -> String -> Bool
-hashMatch entry filename = hashA entry == (hash filename 0x100) && hashB entry == (hash filename 0x200)
-
-data MpqBlockEntry = MpqBlockEntry {
-    offset :: Word,
-    compressedSize :: Word,
-    uncompressedSize :: Word,
-    flags :: Word
-} deriving (Show)
 
 gw16 = getWord16le >>= return . fromIntegral
 gw32 = getWord32le >>= return . fromIntegral
@@ -156,6 +138,19 @@ checkV4 base v4 = do
     when (blockTableCompressedSize v4 /= (blockTableLength base * 16)) $ fail "compressed block table not supported"
     when (highBlockTableCompressedSize v4 /= 0) $ fail "Hi-Block Table not supported"
 
+data MpqHashEntry = MpqHashEntry {
+    hashA :: Word,
+    hashB :: Word,
+    locale :: Int,
+    block :: Int
+} deriving (Show)
+
+isEntryInvalid :: MpqHashEntry -> Bool
+isEntryInvalid entry = block entry == -1 || hashA entry == 0xFFFFFFFF || hashB entry == 0xFFFFFFFF
+
+hashMatch :: MpqHashEntry -> String -> Bool
+hashMatch entry filename = hashA entry == (hash filename 0x100) && hashB entry == (hash filename 0x200)
+
 readHashTable :: MpqHeader -> Get [ MpqHashEntry ]
 readHashTable header = do
     skip $ archiveDataOffset + (fromIntegral $ hashTableOffset header)
@@ -163,6 +158,13 @@ readHashTable header = do
     return $ buildEntries words
         where buildEntries [] = []
               buildEntries (hashA : hashB : locale : block : rest) = MpqHashEntry hashA hashB (fromIntegral locale) (fromIntegral block) : (buildEntries rest)
+
+data MpqBlockEntry = MpqBlockEntry {
+    offset :: Word,
+    compressedSize :: Word,
+    uncompressedSize :: Word,
+    flags :: Word
+} deriving (Show)
 
 readBlockTable :: MpqHeader -> Get [ MpqBlockEntry ]
 readBlockTable header = do
@@ -208,15 +210,59 @@ findMultiBlock hashEntries filename = findMulti new_table
                   then (block x):(findMulti xs)
                   else findMulti xs
 
-parseFile :: String -> IO ()
-parseFile path = do
+isSingleBlock :: MpqBlockEntry -> Bool
+isSingleBlock entry = (flags entry .&. 0x1000000) /= 0
+
+isDclCompressed :: MpqBlockEntry -> Bool
+isDclCompressed entry = (flags entry .&. 0x100) /= 0
+
+isMultiCompressed :: MpqBlockEntry -> Bool
+isMultiCompressed entry = (flags entry .&. 0x200) /= 0
+
+isEncrypted :: MpqBlockEntry -> Bool
+isEncrypted entry = (flags entry .&. 0x10000) /= 0
+
+isPatch :: MpqBlockEntry -> Bool
+isPatch entry = (flags entry .&. 0x100000) /= 0
+
+readBlockOffsets :: MpqHeader -> MpqBlockEntry -> Get [ Word ]
+readBlockOffsets header entry = do
+    when (isPatch entry) $ fail "patch block not supported"
+    when (isEncrypted entry) $ fail "entrypted block not supported"
+    when (isDclCompressed entry) $ fail "DCL compressed block not supported"
+    when (not $ isMultiCompressed entry) $ fail "uncompressed block not supported"
+    let blockCount = (uncompressedSize entry + (blockSize header) - 1) `div` (blockSize header) + 1
+    if isSingleBlock entry
+        then return [0,  (compressedSize entry)]
+        else do
+            skip $ fromIntegral $ offset entry
+            readBlockOffsets' blockCount []
+        where readBlockOffsets' 0 offsets = return offsets
+              readBlockOffsets' count offsets = do
+                  next <- gw32
+                  readBlockOffsets' (count - 1) (offsets ++ [ next ])
+
+readIt :: [ Word ] -> L.ByteString -> L.ByteString
+readIt (cur:next:rest) blocks = L.append plaintext $ readIt (next:rest) blocks
+    where compressed = L.drop (fromIntegral cur) $ L.take (fromIntegral next) blocks
+          plaintext = decompress $ L.drop 1 compressed
+readIt _ blocks = L.empty
+
+readMpq :: String -> IO ()
+readMpq path = do
     contents <- L.readFile path
     let header = runGet parseHeader contents
     checkHeader header
-    print header
+
     let hashEntries = runGet (readHashTable header) contents
     let blockEntries = runGet (readBlockTable header) contents
-    print $ findBlock hashEntries "(listfile)"
-    print $ findMultiBlock hashEntries "(listfile)"
 
-main = parseFile "test.mpq"
+    let listfile = blockEntries !! (findBlock hashEntries "(listfile)")
+    let offsets = runGet (readBlockOffsets header listfile) contents
+    let blocks = L.drop (fromIntegral $ offset listfile) contents
+    let filenames = lines $ L8.unpack $ readIt offsets blocks
+    print filenames
+
+    -- print $ findMultiBlock hashEntries "(listfile)"
+
+main = readMpq "test.mpq"
