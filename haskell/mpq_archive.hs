@@ -2,10 +2,11 @@ import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Lazy.Char8 as L8
 import qualified Data.ByteString as B
 import Data.Binary.Get
-import Data.Word
+import Data.Word (Word)
 import Data.Bits
 import Control.Monad (when)
 import Codec.Compression.Zlib (decompress)
+import Text.Groom (groom)
 
 import Crypto (hash, decrypt)
 
@@ -252,6 +253,7 @@ readMpq :: String -> IO ()
 readMpq path = do
     contents <- L.readFile path
     let header = runGet parseHeader contents
+    putStrLn . groom $ header
     checkHeader header
 
     let hashEntries = runGet (readHashTable header) contents
@@ -261,8 +263,9 @@ readMpq path = do
     let offsets = runGet (readBlockOffsets header listfile) contents
     let blocks = L.drop (fromIntegral $ offset listfile) contents
     let filenames = lines $ L8.unpack $ readIt offsets blocks
-    print filenames
+    -- putStrLn . groom $ filenames
 
-    -- print $ findMultiBlock hashEntries "(listfile)"
+    print $ findMultiBlock hashEntries "(listfile)"
+    return ()
 
-main = readMpq "test.mpq"
+main = readMpq "../mpq/enUS_Text.mpq"

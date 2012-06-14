@@ -4,10 +4,10 @@ module Crypto
         decrypt
     ) where
 
-import Data.Word
-import Data.List
+import Data.Word (Word)
+import Data.List (transpose)
+import Data.Char (ord)
 import Data.Bits
-import Data.Char
 
 build1D :: Word -> Word -> Word -> [ Word ]
 build1D 0 _ _ = []
