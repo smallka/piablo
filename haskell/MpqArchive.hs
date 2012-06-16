@@ -78,18 +78,23 @@ parseHeader = do
     skip $ 6 * 16 -- hashes
     return $ MpqHeader headerSize archiveDataLength version blockSize hashTableOffset blockTableOffset hashTableLength blockTableLength highBlockTableOffset hashTableOffsetHigh blockTableOffsetHigh archiveDataLength64 ebtOffset ehtOffset hashTableCompressedSize blockTableCompressedSize highBlockTableCompressedSize ebtCompressedSize ehtCompressedSize rawChunkSize
 
-checkHeader :: MpqHeader -> IO ()
-checkHeader header = do
-    when (hashTableLength header * 16 /= (blockTableOffset header) - (hashTableOffset header)) $ fail "compressed hash table not supported"
-    when (blockTableLength header * 16 /= (archiveDataLength header) - (blockTableOffset header)) $ fail "compressed block table not supported"
-    when (highBlockTableOffset header /= 0) $ fail "Hi-Block Table not supported"
-    when (hashTableOffsetHigh header /= 0) $ fail "hash Table High bit not supported"
-    when (blockTableOffsetHigh header /= 0) $ fail "block Table High bit not supported"
-    when (archiveDataLength64 header /= archiveDataLength header) $ fail "64-bit archive size not supported"
-    when (hashTableCompressedSize header /= (hashTableLength header * 16)) $ fail "compressed hash table not supported"
-    when (blockTableCompressedSize header /= (blockTableLength header * 16)) $ fail "compressed block table not supported"
-    when (highBlockTableCompressedSize header /= 0) $ fail "Hi-Block Table not supported"
-    -- TODO: check for strong signature presence
+checkHeader :: MpqHeader -> Maybe String
+checkHeader header = case dropWhile fst conds of
+        (x:xs) -> Just $ snd x
+        otherwise -> Nothing
+    where conds = [
+            (True, "hello"),
+            (hashTableLength header * 16 == (blockTableOffset header) - (hashTableOffset header), "compressed hash table not supported"),
+            (blockTableLength header * 16 == (archiveDataLength header) - (blockTableOffset header), "compressed block table not supported"),
+            (highBlockTableOffset header == 0, "Hi-Block Table not supported"),
+            (hashTableOffsetHigh header == 0, "hash Table High bit not supported"),
+            (blockTableOffsetHigh header == 0, "block Table High bit not supported"),
+            (archiveDataLength64 header == archiveDataLength header, "64-bit archive size not supported"),
+            (hashTableCompressedSize header == (hashTableLength header * 16), "compressed hash table not supported"),
+            (blockTableCompressedSize header == (blockTableLength header * 16), "compressed block table not supported"),
+            (highBlockTableCompressedSize header == 0, "Hi-Block Table not supported")
+            -- TODO: check for strong signature presence
+            ]
 
 data MpqHashEntry = MpqHashEntry {
     hashA :: Word,
@@ -206,7 +211,10 @@ readMpq path = do
     contents <- L.readFile path
     let header = runGet parseHeader contents
     putStrLn . groom $ header
-    checkHeader header
+
+    case checkHeader header of
+        Just reason -> print reason
+        otherwise -> return ()
 
     let hashEntries = runGet (readHashTable header) contents
     let blockEntries = runGet (readBlockTable header) contents
