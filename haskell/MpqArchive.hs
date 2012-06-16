@@ -2,39 +2,48 @@ import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Lazy.Char8 as L8
 import qualified Data.ByteString as B
 import Data.Binary.Get
-import Data.Word (Word)
+import Data.Word (Word, Word16, Word32, Word64)
 import Data.Bits
+import Control.Applicative ((<$>), (<*>))
 import Control.Monad (when)
 import Codec.Compression.Zlib (decompress)
 import Text.Groom (groom)
 
+import MpqBinary
 import Crypto (hash, decrypt)
 
 data MpqHeader = MpqHeader {
-    headerSize :: Word,
-    archiveDataLength :: Word,
-    version :: Word,
-    blockSize :: Word,
-    hashTableOffset :: Word,
-    blockTableOffset :: Word,
-    hashTableLength :: Word,
-    blockTableLength :: Word,
+    signature :: Word32,
+    headerSize :: Word32,
+    archiveDataLength :: Word32,
+    version :: Word16,
+    blockSizeExp :: Word16,
+    hashTableOffset :: Word32,
+    blockTableOffset :: Word32,
+    hashTableLength :: Word32,
+    blockTableLength :: Word32,
     -- Version 2 (Burning Crusade)
-    highBlockTableOffset :: Word,
-    hashTableOffsetHigh :: Word,
-    blockTableOffsetHigh :: Word,
+    highBlockTableOffset :: Word64,
+    hashTableOffsetHigh :: Word16,
+    blockTableOffsetHigh :: Word16,
     -- Version 3 (Cataclysm First)
-    archiveDataLength64 :: Word,
-    ebtOffset :: Word,
-    ehtOffset :: Word,
+    archiveDataLength64 :: Word64,
+    ebtOffset :: Word64,
+    ehtOffset :: Word64,
     -- Version 4 (Cataclysm Second)
-    hashTableCompressedSize :: Word,
-    blockTableCompressedSize :: Word,
-    highBlockTableCompressedSize :: Word,
-    ebtCompressedSize :: Word,
-    ehtCompressedSize :: Word,
-    rawChunkSize :: Word
+    hashTableCompressedSize :: Word64,
+    blockTableCompressedSize :: Word64,
+    highBlockTableCompressedSize :: Word64,
+    ebtCompressedSize :: Word64,
+    ehtCompressedSize :: Word64
+    -- NOTE: AutoGet require context stack to go deep, and GHC default to 20
+    -- which is too small for the rest fields to get in
+    -- rawChunkSize :: Word32
+    -- hashes 6 * 16
 } deriving (Show)
+
+blockSize :: MpqHeader -> Word
+blockSize header = 0x200 `shift` (fromIntegral $ blockSizeExp header)
 
 -- TODO: handle MPQ Data in middle
 archiveDataOffset = 0
@@ -43,40 +52,23 @@ gw16 = getWord16le >>= return . fromIntegral
 gw32 = getWord32le >>= return . fromIntegral
 gw64 = getWord64le >>= return . fromIntegral
 
+class AutoGet a where
+    autoGet :: a -> Get MpqHeader
+
+instance AutoGet MpqHeader where
+    autoGet m = return m
+
+instance (MpqBinary x, AutoGet y) => AutoGet (x -> y) where
+    autoGet f = do x <- getMB
+                   autoGet (f x)
+
+-- when (signature == 0x1B51504D) $ fail "user data not supported"
+-- when (signature /= 0x1A51504D) $ fail "invalid archive signature
+-- when (version /= 3) $ fail "only support version 4 (Cataclysm Second
+
 parseHeader :: Get MpqHeader
-parseHeader = do
-    signature <- gw32
-    when (signature == 0x1B51504D) $ fail "user data not supported"
-    when (signature /= 0x1A51504D) $ fail "invalid archive signature"
-
-    headerSize <- gw32
-    archiveDataLength <- gw32
-    version <- gw16
-    when (version /= 3) $ fail "only support version 4 (Cataclysm Second)"
-
-    blockSize <- gw16 >>= return . (shift 0x200) . fromIntegral
-    hashTableOffset <- gw32
-    blockTableOffset <- gw32
-    hashTableLength <- gw32
-    blockTableLength <- gw32
-
-    highBlockTableOffset <- gw64
-    hashTableOffsetHigh <- gw16
-    blockTableOffsetHigh <- gw16
-
-    archiveDataLength64 <- gw64
-    ebtOffset <- gw64
-    ehtOffset <- gw64
-
-    hashTableCompressedSize <- gw64
-    blockTableCompressedSize <- gw64
-    highBlockTableCompressedSize <- gw64
-    ebtCompressedSize <- gw64
-    ehtCompressedSize <- gw64
-    rawChunkSize <- gw32
-
-    skip $ 6 * 16 -- hashes
-    return $ MpqHeader headerSize archiveDataLength version blockSize hashTableOffset blockTableOffset hashTableLength blockTableLength highBlockTableOffset hashTableOffsetHigh blockTableOffsetHigh archiveDataLength64 ebtOffset ehtOffset hashTableCompressedSize blockTableCompressedSize highBlockTableCompressedSize ebtCompressedSize ehtCompressedSize rawChunkSize
+parseHeader = autoGet MpqHeader
+parseHeader' = MpqHeader <$> getMB <*> getMB <*> getMB <*> getMB <*> getMB <*> getMB <*> getMB <*> getMB <*> getMB <*> getMB <*> getMB <*> getMB <*> getMB <*> getMB <*> getMB <*> getMB <*> getMB <*> getMB <*> getMB <*> getMB
 
 checkHeader :: MpqHeader -> Maybe String
 checkHeader header = case dropWhile fst conds of
@@ -89,9 +81,9 @@ checkHeader header = case dropWhile fst conds of
             (highBlockTableOffset header == 0, "Hi-Block Table not supported"),
             (hashTableOffsetHigh header == 0, "hash Table High bit not supported"),
             (blockTableOffsetHigh header == 0, "block Table High bit not supported"),
-            (archiveDataLength64 header == archiveDataLength header, "64-bit archive size not supported"),
-            (hashTableCompressedSize header == (hashTableLength header * 16), "compressed hash table not supported"),
-            (blockTableCompressedSize header == (blockTableLength header * 16), "compressed block table not supported"),
+            (archiveDataLength64 header == fromIntegral (archiveDataLength header), "64-bit archive size not supported"),
+            (hashTableCompressedSize header == fromIntegral (hashTableLength header * 16), "compressed hash table not supported"),
+            (blockTableCompressedSize header == fromIntegral (blockTableLength header * 16), "compressed block table not supported"),
             (highBlockTableCompressedSize header == 0, "Hi-Block Table not supported")
             -- TODO: check for strong signature presence
             ]
@@ -134,7 +126,7 @@ readBlockTable header = do
               buildEntries (offset : compressedSize : uncompressedSize : flags : rest) = MpqBlockEntry offset compressedSize uncompressedSize flags : (buildEntries rest)
 
 -- TODO: make it pure
-readEncryptedUInt32Table :: Word -> Word -> Get [ Word ]
+readEncryptedUInt32Table :: Word32 -> Word -> Get [ Word ]
 readEncryptedUInt32Table tableLength hashValue = do
     let dataLength = tableLength * 16
     bytes <- getByteString $ fromIntegral dataLength
