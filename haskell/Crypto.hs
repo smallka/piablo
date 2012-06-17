@@ -4,12 +4,12 @@ module Crypto
         decrypt
     ) where
 
-import Data.Word (Word)
+import Data.Word (Word32)
 import Data.List (transpose)
 import Data.Char (ord)
 import Data.Bits
 
-build1D :: Word -> Word -> Word -> [ Word ]
+build1D :: Word32 -> Word32 -> Word32 -> [ Word32 ]
 build1D 0 _ _ = []
 build1D len _ r = seed : (build1D (len - 1) new_q new_r)
     where mid_r = (r * 125 + 3) `mod` 0x2AAAAB
@@ -17,15 +17,15 @@ build1D len _ r = seed : (build1D (len - 1) new_q new_r)
           (new_q, new_r) = divMod (mid_r * 125 + 3) 0x2AAAAB
           seed = mid_seed .|. (new_r .&. 0xFFFF)
 
-split2D :: [ Word ] -> [ [ Word ] ]
+split2D :: [ Word32 ] -> [ [ Word32 ] ]
 split2D [] = []
 split2D wordList = first_row : (split2D left)
     where (first_row, left) = splitAt 5 wordList
 
-hashTable :: [ Word ]
+hashTable :: [ Word32 ]
 hashTable = concat . transpose . split2D $ build1D 0x500 0x100001 0x100001
 
-hash :: String -> Int -> Word
+hash :: String -> Int -> Word32
 hash text hashOffset = fst $ foldl calc_hash (0x7FED7FED, 0xEEEEEEEE) bytes
     where bytes = map ord text
           calc_hash (value, seed) c = (new_value, new_seed)
@@ -34,7 +34,7 @@ hash text hashOffset = fst $ foldl calc_hash (0x7FED7FED, 0xEEEEEEEE) bytes
                     new_value = hashTable !! (hashOffset + b) `xor` (value + seed)
                     new_seed = seed + new_value + (seed `shiftL` 5) + (fromIntegral b) + 3
 
-decrypt :: Word -> [ Word ] -> [ Word ]
+decrypt :: Word32 -> [ Word32 ] -> [ Word32 ]
 decrypt hashValue encrypted = plains
     where (plains, _, _) = foldl decrypt_hash ([], hashValue, 0xEEEEEEEE) encrypted
           decrypt_hash (decrypted, value, temp) word = (decrypted ++ [buffer], new_value, new_temp)
