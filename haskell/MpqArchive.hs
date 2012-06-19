@@ -1,6 +1,5 @@
-import qualified Data.ByteString.Lazy as L
-import qualified Data.ByteString.Lazy.Char8 as L8
-import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as LS
+import qualified Data.ByteString.Lazy.Char8 as LS8
 import Data.Binary.Get
 import Data.Word (Word16, Word32, Word64)
 import Data.Bits
@@ -166,12 +165,12 @@ findMultiBlock hashEntries filename = findMulti new_table
                   then (block x):(findMulti xs)
                   else findMulti xs
 
-findFile :: MpqHeader -> [ MpqHashEntry ] -> [ MpqBlockEntry ] -> L.ByteString -> String -> Maybe L.ByteString
+findFile :: MpqHeader -> [ MpqHashEntry ] -> [ MpqBlockEntry ] -> LS.ByteString -> String -> Maybe LS.ByteString
 findFile header hashEntries blockEntries contents filename = do
     blockIndex <- findBlock hashEntries filename
     let entry = blockEntries !! (fromIntegral $ blockIndex)
     let offsets = runGet (readBlockOffsets header entry) contents
-    let blocks = L.drop (fromIntegral $ offset entry) contents
+    let blocks = LS.drop (fromIntegral $ offset entry) contents
     return $ readIt offsets blocks
 
 readBlockOffsets :: MpqHeader -> MpqBlockEntry -> Get [ Word32 ]
@@ -187,15 +186,15 @@ readBlockOffsets header entry = do
             skip $ fromIntegral $ offset entry
             replicateM (fromIntegral blockCount) getMB
 
-readIt :: [ Word32 ] -> L.ByteString -> L.ByteString
-readIt (cur:next:rest) blocks = L.append plaintext $ readIt (next:rest) blocks
-    where compressed = L.drop (fromIntegral cur) $ L.take (fromIntegral next) blocks
-          plaintext = decompress $ L.drop 1 compressed
-readIt _ blocks = L.empty
+readIt :: [ Word32 ] -> LS.ByteString -> LS.ByteString
+readIt (cur:next:rest) blocks = LS.append plaintext $ readIt (next:rest) blocks
+    where compressed = LS.drop (fromIntegral cur) $ LS.take (fromIntegral next) blocks
+          plaintext = decompress $ LS.drop 1 compressed
+readIt _ blocks = LS.empty
 
 parseMpq :: String -> IO ()
 parseMpq path = do
-    contents <- L.readFile path
+    contents <- LS.readFile path
     let header = runGet parseHeader contents
     putStrLn . groom $ header
 
@@ -207,7 +206,7 @@ parseMpq path = do
     let blockEntries = runGet (readBlockTable header) contents
 
     case findFile header hashEntries blockEntries contents "(listfile)" of
-        (Just listfile) -> putStrLn . groom . lines . L8.unpack $ listfile
+        (Just listfile) -> putStrLn . groom . lines . LS8.unpack $ listfile
         otherwise -> fail "(listfile) not found"
 
     print $ findMultiBlock hashEntries "(listfile)"
