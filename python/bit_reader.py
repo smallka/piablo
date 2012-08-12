@@ -40,7 +40,7 @@ class BitReader:
             return self.read_int(self, length)
 
         count = length - 32
-        return (self.read_int(self, 32) << count) | self.read_int(count)
+        return (self.read_int(32) << count) | self.read_int(count)
 
     def read_char_array(self, max_length):
         size = self.read_int(bit_count(max_length))
