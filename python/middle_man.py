@@ -36,7 +36,7 @@ g_opcodes = {
 	10 : JoinBNetGameMessage, 
 }
 
-def parseData(data):
+def parse_data(data):
 	while True:
 		if len(data) < 4:
 			break
@@ -90,7 +90,7 @@ class ClientProtocol(Protocol):
 			print "postpone client send (len=%d)" % len(data)
 			c2s_queue.append(data)
 		else:
-			parseData(data)
+			parse_data(data)
 			server_protocol.transport.write(data)
 
 class ClientProtocolFactory(Factory):
@@ -109,13 +109,13 @@ class ServerProtocol(Protocol):
 		while len(c2s_queue) > 0:
 			data = c2s_queue.pop(0)
 			print "resume client send (len=%d)" % len(data)
-			parseData(data)
+			parse_data(data)
 			self.transport.write(data)
 
 	def dataReceived(self, data):
 		print "server send (len=%d)" % len(data)
 
-		parseData(data)
+		parse_data(data)
 		client_protocol.transport.write(data)
 
 class ServerProtocolFactory(ClientFactory):
