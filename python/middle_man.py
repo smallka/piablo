@@ -7,6 +7,7 @@ from twisted.internet import reactor
 
 from bitstring import BitStream
 from bit_reader import BitReader
+import type_descriptor
 
 dest_ip = None
 dest_port = None
@@ -15,26 +16,6 @@ client_protocol = None
 server_protocol = None
 
 c2s_queue = []
-
-def EntityId(reader):
-	print "EntityId", reader.read_int64(64), reader.read_int64(64)
-
-def GameId(reader):
-	print "GameId", reader.read_int64(64), reader.read_int64(64), reader.read_int64(64)
-
-def JoinBNetGameMessage(reader):
-	EntityId(reader)
-	GameId(reader)
-	print reader.read_int(32)
-	print reader.read_int64(64)
-	print reader.read_int(4)
-	print "ProtoHash", reader.read_int(32)
-	print "SnoPackHash", reader.read_int(32)
-
-
-g_opcodes = {
-	10 : JoinBNetGameMessage, 
-}
 
 def parse_data(data):
 	while True:
@@ -45,15 +26,11 @@ def parse_data(data):
 			print "ERROR: incomplete packet"
 
 		reader = BitReader(data[4:size])
-		while reader.get_bit_len() >= 9:
-			opcode = reader.read_int(9)
-			if opcode not in g_opcodes:
-				print "unrecognized opcode", opcode
-				break
-			else:
-				func = g_opcodes[opcode]
-				print "[%d] %s" % (opcode, func.__name__)
-				func(reader)
+		while type_descriptor.parse_game_msg(reader):
+			pass
+
+		if reader.get_bit_len() > 0:
+			print "ERROR: %d bits left", reader.get_bit_len()
 
 		data = data[size:]
 
@@ -132,6 +109,8 @@ class ServerProtocolFactory(ClientFactory):
 		print "connection failed. Reason:", reason
 
 def main():
+	type_descriptor.load_xml("C:\\download\\typedescriptors.xml")
+
 	reactor.listenUDP(34888, DestAddressProtocol())
 	reactor.run()
 
