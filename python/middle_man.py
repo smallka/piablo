@@ -30,7 +30,7 @@ def parse_data(data):
 			pass
 
 		if reader.get_bit_len() > 0:
-			print "ERROR: %d bits left", reader.get_bit_len()
+			print "WARNING: %d bits left" % reader.get_bit_len()
 
 		data = data[size:]
 

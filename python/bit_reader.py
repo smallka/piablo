@@ -42,6 +42,10 @@ class BitReader:
         count = length - 32
         return (self.read_int(32) << count) | self.read_int(count)
 
+    def read_float32(self):
+        value = BitStream("uint:32=%d" % self.read_int(32))
+        return BitStream(value).float
+
     def read_char_array(self, max_length):
         size = self.read_int(bit_count(max_length))
 
