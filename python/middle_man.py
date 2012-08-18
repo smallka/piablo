@@ -35,7 +35,7 @@ def parse_data(data):
 		while type_descriptor.parse_game_msg(reader):
 			pass
 
-		if reader.get_bit_len() > 0:
+		if reader.get_bit_len() > 7:
 			log.warn("%d bits left" % reader.get_bit_len())
 
 		data = data[size:]
@@ -121,7 +121,9 @@ class ServerProtocolFactory(ClientFactory):
 
 def main():
 	log.set_log_file("message.log")
-	type_descriptor.load_xml("C:\\download\\typedescriptors.xml")
+	type_descriptor.load_xml(
+		"C:\\download\\attributes.xml",
+		"C:\\download\\typedescriptors.xml")
 
 	reactor.listenUDP(34888, DestAddressProtocol())
 	reactor.run()

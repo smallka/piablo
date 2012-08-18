@@ -2,14 +2,24 @@ import xml.dom.minidom
 
 import log
 
+g_attr = {}
 g_opcodes = {}
 g_descs = {}
 
-def load_xml(xml_file_path):
-	dom = xml.dom.minidom.parse(xml_file_path)
+def load_xml(attributes_xml, type_descriptors_xml):
+	dom = xml.dom.minidom.parse(attributes_xml)
+	root = dom.getElementsByTagName("Attributes")[0]
+
+	log.info("loading attributes...")
+
+	for entry in root.getElementsByTagName("Entry"):
+		index = int(entry.getAttribute("Id"))
+		g_attr[index] = entry
+
+	dom = xml.dom.minidom.parse(type_descriptors_xml)
 	root = dom.getElementsByTagName("TypeDescriptors")[0]
 
-	log.info("loading xml...")
+	log.info("loading type descriptors...")
 
 	kinds = set()
 	for child in root.childNodes:
@@ -30,7 +40,30 @@ def load_xml(xml_file_path):
 		if desc.nodeType == xml.dom.minidom.Node.ELEMENT_NODE:
 			index = int(desc.getAttribute("Index"))
 			g_descs[index] = desc
-	log.info("...loading finish")
+
+def parse_attribute(reader, fields):
+	index = int(fields[1]["DT_INT"])
+	attr = g_attr[index]
+	attr_type = attr.getAttribute("EncodingType")
+	if attr_type == "Int":
+		bit_count = int(attr.getAttribute("BitCount"))
+		value = reader.read_int(bit_count)
+	elif attr_type == "IntMinMax":
+		# TODO: IntMinMax
+		bit_count = int(attr.getAttribute("BitCount"))
+		value = reader.read_int(bit_count)
+	elif attr_type == "Float16":
+		# TODO: Float16
+		value = reader.read_int(16)
+	elif attr_type == "Float16Or32":
+		if reader.read_int(1) == 1:
+			# TODO: Float16
+			value = reader.read_int(16)
+		else:
+			value = reader.read_float32()
+	elif attr_type == "Float32":
+		value = reader.read_float32()
+	fields.append({ attr.getAttribute("Name") : value, })
 
 def parse_int(reader, field):
 	bits = int(field.getAttribute("EncodedBits"))
@@ -45,7 +78,7 @@ def parse_char_array(reader, field):
 	bytes = reader.read_char_array(length)
 	return "(%d bytes)" % length
 
-def parse_float(reader, field):
+def parse_float32(reader, field):
 	return reader.read_float32()
 
 def parse_fixed_array(reader, field):
@@ -53,23 +86,29 @@ def parse_fixed_array(reader, field):
 		length = reader.read_int(int(field.getAttribute("EncodedBits2")))
 	else:
 		length = int(field.getAttribute("ArrayLength"))
-	sub_name, sub_index = field.getAttribute("SubType").split("#")
+	sub_type, sub_index = field.getAttribute("SubType").split("#")
 	sub_desc = g_descs[int(sub_index)]
 
 	children = []
 	for i in xrange(length):
 		children.append(parse_field(reader, field, sub_desc))
+	if sub_type == "NetAttributeKeyValue":
+		for child in children:
+			parse_attribute(reader, child)
 	return children
 
 def parse_optional(reader, field):
 	optional = reader.read_int(1)
 	if optional == 1:
-		sub_name, sub_index = field.getAttribute("SubType").split("#")
+		sub_type, sub_index = field.getAttribute("SubType").split("#")
 		sub_desc = g_descs[int(sub_index)]
 		return parse_field(reader, field, sub_desc)
 	return None
 
 def parse_sno_group(reader, field):
+	return { }
+
+def parse_sno_handle(reader, field):
 	sno_group = reader.read_int(32)
 	sno_id = reader.read_int(32)
 	return { "sno_group" : sno_group, "sno_id" : sno_id, }
@@ -79,15 +118,16 @@ g_basic_parser = {
 	"DT_INT64" : parse_int64,
 	"DT_CHARARRAY" : parse_char_array,
 	"DT_SNO" : parse_int,
-	"DT_FLOAT" : parse_float,
+	"DT_FLOAT" : parse_float32,
 	"DT_FIXEDARRAY" : parse_fixed_array,
 	"DT_GBID" : parse_int,
 	"DT_BYTE" : parse_int,
 	"DT_ENUM" : parse_int,
 	"DT_DATAID" : parse_int,
 	'DT_OPTIONAL' : parse_optional,
-	"DT_ANGLE" : parse_float,
+	"DT_ANGLE" : parse_float32,
 	"DT_SNO_GROUP" : parse_sno_group,
+	"DT_SNONAME_HANDLE" : parse_sno_handle,
 }
 
 def parse_field(reader, field, desc):
@@ -98,13 +138,15 @@ def parse_field(reader, field, desc):
 			if sub_field.hasAttribute("Type"):
 				sub_type, sub_index = sub_field.getAttribute("Type").split("#")
 				sub_desc = g_descs[int(sub_index)]
-				children.append(parse_field(reader, sub_field, sub_desc))
-		return { name : children, }
+				children.append({ sub_type : parse_field(reader, sub_field, sub_desc), })
+				if sub_type == "NetAttributeKeyValue":
+					raise NotImplementedError
+		return children
 
 	elif desc.localName == "BasicDescriptor":
 		if name not in g_basic_parser:
 			raise NotImplementedError
-		return { name : g_basic_parser[name](reader, field), }
+		return g_basic_parser[name](reader, field)
 
 def parse_game_msg(reader):
 	if reader.get_bit_len() < 9:
@@ -125,11 +167,14 @@ def parse_game_msg(reader):
 			field_type, field_index = field.getAttribute("Type").split("#")
 			if field_type != "RequiredMessageHeader":
 				field_desc = g_descs[int(field_index)]
-				children.append(parse_field(reader, field, field_desc))
+				child = parse_field(reader, field, field_desc)
+				if field_type == "NetAttributeKeyValue":
+					parse_attribute(reader, child)
+				children.append({ field_type : child, })
 
 	log.info(str(children))
 
 	return True
 
 if __name__ == '__main__':
-	load_xml("C:\\download\\typedescriptors.xml")
+	load_xml("C:\\download\\attributes.xml", "C:\\download\\typedescriptors.xml")

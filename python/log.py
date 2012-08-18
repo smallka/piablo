@@ -7,7 +7,8 @@ def set_log_file(file_path):
 
 def info(msg):
 	print msg
-	log_file.write(msg + "\n")
+	if log_file is not None:
+		log_file.write(msg + "\n")
 
 def infos(msgs):
 	for msg in msgs:
