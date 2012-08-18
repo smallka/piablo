@@ -7,6 +7,7 @@ from twisted.internet import reactor
 
 from bitstring import BitStream
 from bit_reader import BitReader
+import log
 import type_descriptor
 
 dest_ip = None
@@ -15,7 +16,10 @@ dest_port = None
 client_protocol = None
 server_protocol = None
 
-c2s_queue = []
+c2s_pending = []
+
+c2s_data = ""
+s2c_data = ""
 
 def parse_data(data):
 	while True:
@@ -23,24 +27,27 @@ def parse_data(data):
 			break
 		size = BitStream(bytes=data[:4]).uint
 		if len(data) < size:
-			print "ERROR: incomplete packet"
+			break
+
+		log.info("parse packet (size=%d)" % size)
 
 		reader = BitReader(data[4:size])
 		while type_descriptor.parse_game_msg(reader):
 			pass
 
 		if reader.get_bit_len() > 0:
-			print "WARNING: %d bits left" % reader.get_bit_len()
+			log.warn("%d bits left" % reader.get_bit_len())
 
 		data = data[size:]
 
 	if len(data) > 0:
-		print "ERROR: %d bytes unrecognized", len(data)
+		log.warn("%d bytes left" % len(data))
+	return data
 
 class DestAddressProtocol(DatagramProtocol):
 
 	def datagramReceived(self, data, (host, port)):
-		print "received %s from %s:%d" % (data, host, port)
+		log.info("received %s from %s:%d" % (data, host, port))
 
 		global dest_ip, dest_port
 		dest_ip, dest_port = data.split("|")
@@ -54,20 +61,21 @@ class ClientProtocol(Protocol):
 	def connectionMade(self):
 		global client_protocol
 
-		print "client connected"
+		log.info("client connected")
 
 		client_protocol = self
 
 		reactor.connectTCP(dest_ip, dest_port, ServerProtocolFactory())
 
 	def dataReceived(self, data):
-		print "client send (len=%d)" % len(data)
+		log.info("client send (len=%d)" % len(data))
 
 		if server_protocol is None:
-			print "postpone client send (len=%d)" % len(data)
-			c2s_queue.append(data)
+			log.info("postpone client send (len=%d)" % len(data))
+			c2s_pending.append(data)
 		else:
-			parse_data(data)
+			global c2s_data
+			c2s_data = parse_data(c2s_data + data)
 			server_protocol.transport.write(data)
 
 class ClientProtocolFactory(Factory):
@@ -79,20 +87,23 @@ class ServerProtocol(Protocol):
 	def connectionMade(self):
 		global server_protocol
 
-		print "server connected"
+		log.info("server connected")
 
 		server_protocol = self
 
-		while len(c2s_queue) > 0:
-			data = c2s_queue.pop(0)
-			print "resume client send (len=%d)" % len(data)
-			parse_data(data)
+		while len(c2s_pending) > 0:
+			data = c2s_pending.pop(0)
+			log.info("resume client send (len=%d)" % len(data))
+
+			global c2s_data
+			c2s_data = parse_data(c2s_data + data)
 			self.transport.write(data)
 
 	def dataReceived(self, data):
-		print "server send (len=%d)" % len(data)
+		log.info("server send (len=%d)" % len(data))
 
-		parse_data(data)
+		global s2c_data
+		s2c_data = parse_data(s2c_data + data)
 		client_protocol.transport.write(data)
 
 class ServerProtocolFactory(ClientFactory):
@@ -100,15 +111,16 @@ class ServerProtocolFactory(ClientFactory):
 	protocol = ServerProtocol
 
 	def startedConnecting(self, connector):
-		print "started to connect server"
+		log.info("started to connect server")
 
 	def clientConnectionLost(self, connector, reason):
-		print "lost connection. Reason:", reason
+		log.error("lost connection. Reason: " + str(reason))
 
 	def clientConnectionFailed(self, connector, reason):
-		print "connection failed. Reason:", reason
+		log.error("connection failed. Reason:" + str(reason))
 
 def main():
+	log.set_log_file("message.log")
 	type_descriptor.load_xml("C:\\download\\typedescriptors.xml")
 
 	reactor.listenUDP(34888, DestAddressProtocol())
