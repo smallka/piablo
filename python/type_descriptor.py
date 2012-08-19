@@ -76,6 +76,7 @@ def parse_int64(reader, field):
 def parse_char_array(reader, field):
 	length = int(field.getAttribute("ArrayLength"))
 	bytes = reader.read_char_array(length)
+	# TODO: represent text
 	return "(%d bytes)" % length
 
 def parse_float32(reader, field):
@@ -150,17 +151,17 @@ def parse_field(reader, field, desc):
 
 def parse_game_msg(reader):
 	if reader.get_bit_len() < 9:
-		return False
+		return None
 		
 	opcode = reader.read_int(9)
 	index = g_opcodes.get(opcode)
 	if index is None:
-		return False
+		return None
 
 	desc = g_descs[index]
-	log.info(desc.getAttribute("Name"))
+	name = desc.getAttribute("Name")
+	#log.info(name)
 
-	texts = []
 	children = []
 	for field in desc.getElementsByTagName("Field"):
 		if field.hasAttribute("Type"):
@@ -172,9 +173,8 @@ def parse_game_msg(reader):
 					parse_attribute(reader, child)
 				children.append({ field_type : child, })
 
-	log.info(str(children))
-
-	return True
+	#log.info(str(children))
+	return name, children
 
 if __name__ == '__main__':
 	load_xml("C:\\download\\attributes.xml", "C:\\download\\typedescriptors.xml")
