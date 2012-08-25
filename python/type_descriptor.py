@@ -177,4 +177,4 @@ def parse_game_msg(reader):
 	return name, children
 
 if __name__ == '__main__':
-	load_xml("C:\\download\\attributes.xml", "C:\\download\\typedescriptors.xml")
+	load_xml("attributes.xml", "typedescriptors.xml")

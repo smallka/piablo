@@ -174,9 +174,7 @@ class MainFrame(wx.Frame):
 
 def main():
 	log.set_log_file("message.log")
-	type_descriptor.load_xml(
-		"C:\\download\\attributes.xml",
-		"C:\\download\\typedescriptors.xml")
+	type_descriptor.load_xml("attributes.xml", "typedescriptors.xml")
 
 	app = wx.App(False) 
 	global g_frame
