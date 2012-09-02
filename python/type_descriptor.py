@@ -176,5 +176,18 @@ def parse_game_msg(reader):
     #log.info(str(children))
     return name, children
 
+def text_in_msg(msg, text):
+    if isinstance(msg, list):
+        for item in msg:
+            if text_in_msg(item, text):
+                return True
+    elif isinstance(msg, dict):
+        for k, v in msg.iteritems():
+            if text_in_msg(v, text):
+                return True
+    elif str(msg) == text:
+        return True
+    return False
+
 if __name__ == '__main__':
     load_xml("attributes.xml", "typedescriptors.xml")

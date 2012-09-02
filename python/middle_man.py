@@ -68,6 +68,7 @@ def parse_data(data, direction):
             g_msgs.append(msg)
 
             g_frame.add_row(msg_index)
+            g_frame.refresh_statusbar()
 
         if reader.get_bit_len() > 7:
             log.warn("%d bits left" % reader.get_bit_len())
@@ -189,6 +190,7 @@ class MainFrame(wx.Frame):
         self.statusBar = self.CreateStatusBar()
 
         self.type_filter = None
+        self.data_filter = None
 
     def on_select(self, event):
         index = event.GetIndex()
@@ -200,7 +202,12 @@ class MainFrame(wx.Frame):
     def add_row(self, msg_index):
         msg = g_msgs[msg_index]
 
-        if self.type_filter is not None and msg[IDX_TYPE] not in self.type_filter:
+        if self.type_filter is not None \
+                and msg[IDX_TYPE] not in self.type_filter:
+            return
+
+        if self.data_filter is not None \
+                and not type_descriptor.text_in_msg(msg[IDX_DATA], self.data_filter):
             return
 
         index = self.listctrl.InsertStringItem(sys.maxint, msg[IDX_TIME])
@@ -209,12 +216,15 @@ class MainFrame(wx.Frame):
         if msg[IDX_DIR] == DIRECTION_C2S:
             self.listctrl.SetItemBackgroundColour(index, "grey")
 
+    def refresh_statusbar(self):
         self.statusBar.SetStatusText("%d / %d" % (self.listctrl.GetItemCount(), len(g_msgs)))
 
     def refresh_rows(self):
         self.listctrl.DeleteAllItems()
         for i in xrange(len(g_msgs)):
             self.add_row(i)
+
+        self.refresh_statusbar()
 
     def filter_type(self, event):
         msg_types = set()
@@ -234,10 +244,18 @@ class MainFrame(wx.Frame):
         self.refresh_rows()
 
     def filter_data(self, event):
-        wx.MessageBox("Not Implemented yet.", "Ay Carumba!", wx.OK | wx.ICON_INFORMATION)
+        text = wx.GetTextFromUser("Enter the text", "Filter Data Dialog")
+        if text.strip() == "":
+            wx.MessageBox("No data input.", "D'oh!", wx.OK | wx.ICON_ERROR)
+            return
+
+        self.data_filter = text
+
+        self.refresh_rows()
 
     def show_all(self, event):
         self.type_filter = None
+        self.data_filter = None
         self.refresh_rows()
 
 def main():
