@@ -1,11 +1,14 @@
 import xml.dom.minidom
 
 import log
-from field_alias import FieldAlias
+from alias import MessageAlias, FieldAlias
 
 g_attr = {}
 g_opcodes = {}
 g_descs = {}
+
+IDX_INDEX = "index"
+IDX_NAME = "name"
 
 def load_xml(attributes_xml, type_descriptors_xml):
     dom = xml.dom.minidom.parse(attributes_xml)
@@ -33,9 +36,25 @@ def load_xml(attributes_xml, type_descriptors_xml):
 
     for game_msg in root.getElementsByTagName("GameMessageDescriptor"):
         index = game_msg.getAttribute("Index")
+        name = game_msg.getAttribute("Name")
         opcodes = game_msg.getAttribute("NetworkIds")
-        for opcode in opcodes.split(" "): 
-            g_opcodes[int(opcode)] = int(index)
+        opcodes = opcodes.split(" ")
+        if len(opcodes) > 1:
+            name_index = 1 
+            for opcode in opcodes: 
+                alias = "%s%d" % (name, name_index)
+                if alias in MessageAlias:
+                    alias = MessageAlias[alias]
+                g_opcodes[int(opcode)] = {
+                    IDX_INDEX : int(index),
+                    IDX_NAME : alias,
+                }
+                name_index += 1
+        else:
+            g_opcodes[int(opcodes[0])] = {
+                IDX_INDEX : int(index),
+                IDX_NAME : name,
+            }
 
     for desc in root.childNodes:
         if desc.nodeType == xml.dom.minidom.Node.ELEMENT_NODE:
@@ -67,7 +86,7 @@ def parse_attribute(reader, fields):
     else:
         log.error("unknown attribute type: " + attr_type)
         raise NotImplementedError
-    key = attr.getAttribute("Name") + "#" + attr_type
+    key = attr.getAttribute("Name") + "::" + attr_type
     fields.append({ key : value, })
 
 def parse_int(reader, field):
@@ -142,11 +161,11 @@ g_basic_parser = {
 
 def get_field_alias(name, field_type, field):
     if not field.hasAttribute("Offset"):
-        log.error("Offset is missing, attr: %s, type: %s" % (name, field_type))
+        log.error("offset missing, attr: %s, type: %s" % (name, field_type))
         raise NotImplementedError
     offset = int(field.getAttribute("Offset"))
     if name in FieldAlias and offset in FieldAlias[name]:
-            return FieldAlias[name][offset] + "#" + field_type
+        return "%s::%s" % (FieldAlias[name][offset], field_type)
     return field_type
 
 def parse_field(reader, field, desc):
@@ -160,13 +179,13 @@ def parse_field(reader, field, desc):
                 sub_desc = g_descs[int(sub_index)]
                 children.append({ key : parse_field(reader, sub_field, sub_desc), })
                 if sub_type == "NetAttributeKeyValue":
-                    log.error("NetAttributeKeyValue in wrong place")
+                    log.error("unexpected NetAttributeKeyValue in %s" % name)
                     raise NotImplementedError
         return children
 
     elif desc.localName == "BasicDescriptor":
         if name not in g_basic_parser:
-            log.error("Not implemented basic descriptor: " + name)
+            log.error("unsupported basic descriptor: " + name)
             raise NotImplementedError
         return g_basic_parser[name](reader, field)
 
@@ -175,12 +194,12 @@ def parse_game_msg(reader):
         return None
         
     opcode = reader.read_int(9)
-    index = g_opcodes.get(opcode)
-    if index is None:
+    op_info = g_opcodes.get(opcode)
+    if op_info is None:
         return None
 
-    desc = g_descs[index]
-    name = desc.getAttribute("Name")
+    desc = g_descs[op_info[IDX_INDEX]]
+    name = op_info[IDX_NAME]
     #log.info(name)
 
     children = []

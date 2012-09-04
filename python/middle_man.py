@@ -51,7 +51,7 @@ def parse_data(data, direction):
         if len(data) < size:
             break
 
-        log.info("parse packet (size=%d)" % size)
+        #log.info("parse packet (size=%d)" % size)
 
         reader = BitReader(data[4:size])
         while True:
@@ -82,7 +82,7 @@ def parse_data(data, direction):
 class DestAddressProtocol(DatagramProtocol):
 
     def datagramReceived(self, data, (host, port)):
-        log.info("received %s from %s:%d" % (data, host, port))
+        #log.info("received %s from %s:%d" % (data, host, port))
 
         global dest_ip, dest_port
         dest_ip, dest_port = data.split("|")
@@ -103,10 +103,10 @@ class ClientProtocol(Protocol):
         reactor.connectTCP(dest_ip, dest_port, ServerProtocolFactory())
 
     def dataReceived(self, data):
-        log.info("client send (len=%d)" % len(data))
+        #log.info("client send (len=%d)" % len(data))
 
         if server_protocol is None:
-            log.info("postpone client send (len=%d)" % len(data))
+            #log.info("postpone client send (len=%d)" % len(data))
             c2s_pending.append(data)
         else:
             global c2s_data
@@ -128,14 +128,14 @@ class ServerProtocol(Protocol):
 
         while len(c2s_pending) > 0:
             data = c2s_pending.pop(0)
-            log.info("resume client send (len=%d)" % len(data))
+            #log.info("resume client send (len=%d)" % len(data))
 
             global c2s_data
             c2s_data = parse_data(c2s_data + data, DIRECTION_C2S)
             self.transport.write(data)
 
     def dataReceived(self, data):
-        log.info("server send (len=%d)" % len(data))
+        #log.info("server send (len=%d)" % len(data))
 
         global s2c_data
         s2c_data = parse_data(s2c_data + data, DIRECTION_S2C)
