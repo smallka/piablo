@@ -1,6 +1,7 @@
 import xml.dom.minidom
 
 import log
+from field_alias import FieldAlias
 
 g_attr = {}
 g_opcodes = {}
@@ -63,7 +64,11 @@ def parse_attribute(reader, fields):
             value = reader.read_float32()
     elif attr_type == "Float32":
         value = reader.read_float32()
-    fields.append({ attr.getAttribute("Name") : value, })
+    else:
+        log.error("unknown attribute type: " + attr_type)
+        raise NotImplementedError
+    key = attr.getAttribute("Name") + "#" + attr_type
+    fields.append({ key : value, })
 
 def parse_int(reader, field):
     bits = int(field.getAttribute("EncodedBits"))
@@ -135,6 +140,15 @@ g_basic_parser = {
     "DT_VARIABLEARRAY" : parse_variable_array,
 }
 
+def get_field_alias(name, field_type, field):
+    if not field.hasAttribute("Offset"):
+        log.error("Offset is missing, attr: %s, type: %s" % (name, field_type))
+        raise NotImplementedError
+    offset = int(field.getAttribute("Offset"))
+    if name in FieldAlias and offset in FieldAlias[name]:
+            return FieldAlias[name][offset] + "#" + field_type
+    return field_type
+
 def parse_field(reader, field, desc):
     name = desc.getAttribute("Name")
     if desc.localName == "StructureDescriptor":
@@ -142,9 +156,11 @@ def parse_field(reader, field, desc):
         for sub_field in desc.getElementsByTagName("Field"):
             if sub_field.hasAttribute("Type"):
                 sub_type, sub_index = sub_field.getAttribute("Type").split("#")
+                key = get_field_alias(name, sub_type, sub_field)
                 sub_desc = g_descs[int(sub_index)]
-                children.append({ sub_type : parse_field(reader, sub_field, sub_desc), })
+                children.append({ key : parse_field(reader, sub_field, sub_desc), })
                 if sub_type == "NetAttributeKeyValue":
+                    log.error("NetAttributeKeyValue in wrong place")
                     raise NotImplementedError
         return children
 
@@ -168,15 +184,20 @@ def parse_game_msg(reader):
     #log.info(name)
 
     children = []
-    for field in desc.getElementsByTagName("Field"):
-        if field.hasAttribute("Type"):
-            field_type, field_index = field.getAttribute("Type").split("#")
-            if field_type != "RequiredMessageHeader":
-                field_desc = g_descs[int(field_index)]
-                child = parse_field(reader, field, field_desc)
-                if field_type == "NetAttributeKeyValue":
-                    parse_attribute(reader, child)
-                children.append({ field_type : child, })
+    try:
+        for field in desc.getElementsByTagName("Field"):
+            if field.hasAttribute("Type"):
+                field_type, field_index = field.getAttribute("Type").split("#")
+                if field_type != "RequiredMessageHeader":
+                    key = get_field_alias(name, field_type, field)
+                    field_desc = g_descs[int(field_index)]
+                    child = parse_field(reader, field, field_desc)
+                    if field_type == "NetAttributeKeyValue":
+                        parse_attribute(reader, child)
+                    children.append({ key : child, })
+    except NotImplementedError as e:
+        log.error("error when parsing, name: %s, field_type: %s" % (name, field_type))
+        raise e
 
     #log.info(str(children))
     return name, children
