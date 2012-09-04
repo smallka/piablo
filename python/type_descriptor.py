@@ -114,6 +114,9 @@ def parse_sno_handle(reader, field):
     sno_id = reader.read_int(32)
     return { "sno_group" : sno_group, "sno_id" : sno_id, }
 
+def parse_variable_array(reader, field):
+    raise NotImplementedError
+
 g_basic_parser = {
     "DT_INT" : parse_int,
     "DT_INT64" : parse_int64,
@@ -129,6 +132,7 @@ g_basic_parser = {
     "DT_ANGLE" : parse_float32,
     "DT_SNO_GROUP" : parse_sno_group,
     "DT_SNONAME_HANDLE" : parse_sno_handle,
+    "DT_VARIABLEARRAY" : parse_variable_array,
 }
 
 def parse_field(reader, field, desc):
@@ -146,6 +150,7 @@ def parse_field(reader, field, desc):
 
     elif desc.localName == "BasicDescriptor":
         if name not in g_basic_parser:
+            log.error("Not implemented basic descriptor: " + name)
             raise NotImplementedError
         return g_basic_parser[name](reader, field)
 
