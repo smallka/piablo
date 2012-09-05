@@ -44,6 +44,7 @@ IDX_TIME = "time"
 g_frame = None
 
 def parse_data(data, direction):
+    time_str = time.strftime("%H:%M:%S")
     while True:
         if len(data) < 4:
             break
@@ -62,7 +63,7 @@ def parse_data(data, direction):
                 IDX_TYPE : type_and_data[0],
                 IDX_DATA : type_and_data[1],
                 IDX_DIR : direction,
-                IDX_TIME : time.strftime("%H:%M:%S"),
+                IDX_TIME : time_str,
             }
             msg_index = len(g_msgs)
             g_msgs.append(msg)
@@ -180,17 +181,25 @@ class MainFrame(wx.Frame):
         toolbar = self.CreateToolBar(wx.TB_HORZ_TEXT|wx.TB_NOICONS)
         toolbar.AddLabelTool(1, 'Filter Type', default_bitmap)
         toolbar.AddLabelTool(2, 'Filter Data', default_bitmap)
-        toolbar.AddLabelTool(3, 'Show All', default_bitmap)
+        toolbar.AddLabelTool(3, 'Hide Type', default_bitmap)
+        toolbar.AddLabelTool(4, 'Show All', default_bitmap)
         toolbar.Realize()
 
         self.Bind(wx.EVT_TOOL, self.filter_type, id=1)
         self.Bind(wx.EVT_TOOL, self.filter_data, id=2)
-        self.Bind(wx.EVT_TOOL, self.show_all, id=3)
+        self.Bind(wx.EVT_TOOL, self.hide_type, id=3)
+        self.Bind(wx.EVT_TOOL, self.show_all, id=4)
 
         self.statusBar = self.CreateStatusBar()
 
         self.type_filter = None
         self.data_filter = None
+
+        self.type_hidden = set([
+            "GameTickMessage",
+            "DWordDataMessage10",
+            "DWordDataMessage11",
+        ])
 
     def on_select(self, event):
         index = event.GetIndex()
@@ -208,6 +217,9 @@ class MainFrame(wx.Frame):
 
         if self.data_filter is not None \
                 and not type_descriptor.text_in_msg(msg[IDX_DATA], self.data_filter):
+            return
+
+        if msg[IDX_TYPE] in self.type_hidden:
             return
 
         index = self.listctrl.InsertStringItem(sys.maxint, msg[IDX_TIME])
@@ -253,9 +265,27 @@ class MainFrame(wx.Frame):
 
         self.refresh_rows()
 
+    def hide_type(self, event):
+        msg_types = set()
+        index = self.listctrl.GetFirstSelected()
+        while index != -1:
+            msg_index = self.listctrl.GetItemData(index)
+            msg = g_msgs[msg_index]
+            msg_types.add(msg[IDX_TYPE])
+            index = self.listctrl.GetNextSelected(index)
+
+        if len(msg_types) == 0:
+            wx.MessageBox("No messages selected.", "D'oh!", wx.OK | wx.ICON_ERROR)
+            return
+
+        self.type_hidden = self.type_hidden.union(msg_types)
+
+        self.refresh_rows()
+
     def show_all(self, event):
         self.type_filter = None
         self.data_filter = None
+        self.type_hidden = set([])
         self.refresh_rows()
 
 def main():
