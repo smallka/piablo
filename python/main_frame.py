@@ -40,6 +40,9 @@ class MainFrame(wx.Frame):
             "SimpleMessage16",
         ])
 
+        # TODO: tmp
+        self.setup_connection(None)
+
     def setup_connection(self, conn):
         self.conn = conn
 
@@ -130,6 +133,13 @@ class MainFrame(wx.Frame):
         self.refresh_rows()
 
     def hide_type(self, event):
+        type_mask_dialog = TypeMaskDialog(None, title="Type Mask Dialog")
+        ret = type_mask_dialog.ShowModal()
+        print type_mask_dialog.show_list.GetItems()
+        print type_mask_dialog.hide_list.GetItems()
+        type_mask_dialog.Destroy()
+
+        """
         msg_types = set()
         index = self.listctrl.GetFirstSelected()
         while index != -1:
@@ -145,7 +155,56 @@ class MainFrame(wx.Frame):
         self.type_hidden = self.type_hidden.union(msg_types)
 
         self.refresh_rows()
+        """
 
     def clear_all(self, event):
         self.conn.remove_all_msg()
         self.refresh_rows()
+
+
+class TypeMaskDialog(wx.Dialog):
+
+    def __init__(self, *args, **kw):
+        super(TypeMaskDialog, self).__init__(*args, **kw)
+
+        left_panel = wx.Panel(self)
+        left_vbox = wx.BoxSizer(wx.VERTICAL)
+        left_list = wx.ListBox(left_panel, -1, style=wx.LB_SORT)
+        left_list.Append("Hello")
+        self.Bind(wx.EVT_LISTBOX_DCLICK, self.OnHide, left_list)
+
+        left_vbox.Add(wx.StaticText(left_panel, label="Show"), 0, wx.EXPAND)
+        left_vbox.Add(left_list, 1, wx.EXPAND)
+        left_panel.SetSizer(left_vbox)
+
+        right_panel = wx.Panel(self)
+        right_vbox = wx.BoxSizer(wx.VERTICAL)
+        right_list = wx.ListBox(right_panel, -1, style=wx.LB_SORT)
+        right_list.Append("world")
+        self.Bind(wx.EVT_LISTBOX_DCLICK, self.OnShow, right_list)
+
+        right_vbox.Add(wx.StaticText(right_panel, label="Hide"), 0, wx.EXPAND)
+        right_vbox.Add(right_list, 1, wx.EXPAND)
+        right_panel.SetSizer(right_vbox)
+
+        hbox = wx.BoxSizer(wx.HORIZONTAL)
+        hbox.Add(left_panel, 1, wx.EXPAND)
+        hbox.Add(right_panel, 1, wx.EXPAND)
+        self.SetSizer(hbox)
+
+        self.show_list = left_list
+        self.hide_list = right_list
+
+    def OnHide(self, event):
+        sel = self.show_list.GetSelection()
+        value = self.show_list.GetString(sel)
+
+        self.show_list.Delete(sel)
+        self.hide_list.Append(value)
+
+    def OnShow(self, event):
+        sel = self.hide_list.GetSelection()
+        value = self.hide_list.GetString(sel)
+
+        self.hide_list.Delete(sel)
+        self.show_list.Append(value)
