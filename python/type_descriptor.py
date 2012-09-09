@@ -6,6 +6,7 @@ from alias import MessageAlias, FieldAlias
 g_attr = {}
 g_opcodes = {}
 g_descs = {}
+g_message_types = set()
 
 IDX_INDEX = "index"
 IDX_NAME = "name"
@@ -40,8 +41,8 @@ def load_xml(attributes_xml, type_descriptors_xml):
         opcodes = game_msg.getAttribute("NetworkIds")
         opcodes = opcodes.split(" ")
         if len(opcodes) > 1:
-            name_index = 1 
-            for opcode in opcodes: 
+            name_index = 1
+            for opcode in opcodes:
                 alias = "%s%d" % (name, name_index)
                 if alias in MessageAlias:
                     alias = MessageAlias[alias]
@@ -49,12 +50,14 @@ def load_xml(attributes_xml, type_descriptors_xml):
                     IDX_INDEX : int(index),
                     IDX_NAME : alias,
                 }
+                g_message_types.add(alias)
                 name_index += 1
         else:
             g_opcodes[int(opcodes[0])] = {
                 IDX_INDEX : int(index),
                 IDX_NAME : name,
             }
+            g_message_types.add(name)
 
     for desc in root.childNodes:
         if desc.nodeType == xml.dom.minidom.Node.ELEMENT_NODE:
@@ -192,7 +195,7 @@ def parse_field(reader, field, desc):
 def parse_game_msg(reader):
     if reader.get_bit_len() < 9:
         return None
-        
+
     opcode = reader.read_int(9)
     op_info = g_opcodes.get(opcode)
     if op_info is None:
@@ -233,6 +236,9 @@ def text_in_msg(msg, text):
     elif str(msg) == text:
         return True
     return False
+
+def get_message_types():
+    return g_message_types
 
 if __name__ == '__main__':
     load_xml("attributes.xml", "typedescriptors.xml")

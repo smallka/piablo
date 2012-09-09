@@ -33,16 +33,6 @@ class MainFrame(wx.Frame):
         self.type_filter = None
         self.data_filter = None
 
-        self.type_hidden = set([
-            "GameTickMessage",
-            "DWordDataMessage10",
-            "DWordDataMessage11",
-            "SimpleMessage16",
-        ])
-
-        # TODO: tmp
-        self.setup_connection(None)
-
     def setup_connection(self, conn):
         self.conn = conn
 
@@ -52,14 +42,14 @@ class MainFrame(wx.Frame):
         toolbar.AddLabelTool(1, 'Filter Type', default_bitmap)
         toolbar.AddLabelTool(2, 'Filter Data', default_bitmap)
         toolbar.AddLabelTool(3, 'Clear Filter', default_bitmap)
-        toolbar.AddLabelTool(4, 'Hide Type', default_bitmap)
+        toolbar.AddLabelTool(4, 'Mask Type', default_bitmap)
         toolbar.AddLabelTool(5, 'Clear All', default_bitmap)
         toolbar.Realize()
 
         self.Bind(wx.EVT_TOOL, self.filter_type, id=1)
         self.Bind(wx.EVT_TOOL, self.filter_data, id=2)
         self.Bind(wx.EVT_TOOL, self.clear_filter, id=3)
-        self.Bind(wx.EVT_TOOL, self.hide_type, id=4)
+        self.Bind(wx.EVT_TOOL, self.mask_type, id=4)
         self.Bind(wx.EVT_TOOL, self.clear_all, id=5)
 
     def on_select(self, event):
@@ -71,9 +61,6 @@ class MainFrame(wx.Frame):
 
     def add_row(self, msg_index):
         msg = self.conn.get_msg(msg_index)
-
-        if msg[IDX_MSG_TYPE] in self.type_hidden:
-            return
 
         if self.type_filter is not None \
                 and msg[IDX_MSG_TYPE] not in self.type_filter:
@@ -132,30 +119,11 @@ class MainFrame(wx.Frame):
         self.data_filter = None
         self.refresh_rows()
 
-    def hide_type(self, event):
-        type_mask_dialog = TypeMaskDialog(None, title="Type Mask Dialog")
+    def mask_type(self, event):
+        type_mask_dialog = TypeMaskDialog(self.conn.get_type_mask(), None, title="Type Mask Dialog")
         ret = type_mask_dialog.ShowModal()
-        print type_mask_dialog.show_list.GetItems()
-        print type_mask_dialog.hide_list.GetItems()
+        self.conn.update_type_mask(type_mask_dialog.hide_list.GetItems())
         type_mask_dialog.Destroy()
-
-        """
-        msg_types = set()
-        index = self.listctrl.GetFirstSelected()
-        while index != -1:
-            msg_index = self.listctrl.GetItemData(index)
-            msg = self.conn.get_msg(msg_index)
-            msg_types.add(msg[IDX_MSG_TYPE])
-            index = self.listctrl.GetNextSelected(index)
-
-        if len(msg_types) == 0:
-            wx.MessageBox("No messages selected.", "D'oh!", wx.OK | wx.ICON_ERROR)
-            return
-
-        self.type_hidden = self.type_hidden.union(msg_types)
-
-        self.refresh_rows()
-        """
 
     def clear_all(self, event):
         self.conn.remove_all_msg()
@@ -164,13 +132,12 @@ class MainFrame(wx.Frame):
 
 class TypeMaskDialog(wx.Dialog):
 
-    def __init__(self, *args, **kw):
+    def __init__(self, type_mask, *args, **kw):
         super(TypeMaskDialog, self).__init__(*args, **kw)
 
         left_panel = wx.Panel(self)
         left_vbox = wx.BoxSizer(wx.VERTICAL)
         left_list = wx.ListBox(left_panel, -1, style=wx.LB_SORT)
-        left_list.Append("Hello")
         self.Bind(wx.EVT_LISTBOX_DCLICK, self.OnHide, left_list)
 
         left_vbox.Add(wx.StaticText(left_panel, label="Show"), 0, wx.EXPAND)
@@ -180,8 +147,13 @@ class TypeMaskDialog(wx.Dialog):
         right_panel = wx.Panel(self)
         right_vbox = wx.BoxSizer(wx.VERTICAL)
         right_list = wx.ListBox(right_panel, -1, style=wx.LB_SORT)
-        right_list.Append("world")
         self.Bind(wx.EVT_LISTBOX_DCLICK, self.OnShow, right_list)
+
+        for type_name, hidden in type_mask.iteritems():
+            if hidden:
+                right_list.Append(type_name)
+            else:
+                left_list.Append(type_name)
 
         right_vbox.Add(wx.StaticText(right_panel, label="Hide"), 0, wx.EXPAND)
         right_vbox.Add(right_list, 1, wx.EXPAND)

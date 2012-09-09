@@ -66,7 +66,7 @@ class ServerProtocol(Protocol):
     def connectionMade(self):
         log.info("server connected")
         self.conn.setup_server(self)
-        
+
     def dataReceived(self, data):
         #log.info("server send (len=%d)" % len(data))
         self.conn.receive_server(data)
@@ -93,7 +93,7 @@ def main():
     log.set_log_file("message.log")
     type_descriptor.load_xml("attributes.xml", "typedescriptors.xml")
 
-    app = wx.App(False) 
+    app = wx.App(False)
 
     # NOTE: frame must exist before run
     frame = MainFrame()

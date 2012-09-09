@@ -7,6 +7,13 @@ import type_descriptor
 from bit_reader import BitReader
 from main_frame import MainFrame
 
+g_type_hidden = set([
+    "GameTickMessage",
+    "DWordDataMessage10",
+    "DWordDataMessage11",
+    "SimpleMessage16",
+])
+
 class Connection:
 
     def __init__(self, frame):
@@ -17,6 +24,10 @@ class Connection:
         self.pending_to_server = []
         self.msgs = []
         self.frame = frame
+
+        self.type_mask = {}
+        for type_name in type_descriptor.get_message_types():
+            self.type_mask[type_name] = type_name in g_type_hidden
 
     def setup_client(self, client_socket):
         self.client_socket = client_socket
@@ -41,7 +52,7 @@ class Connection:
 
     def receive_server(self, data):
         self.parse_data(data, DIRECTION_S2C)
-        self.client_socket.transport.write(data)        
+        self.client_socket.transport.write(data)
 
     def get_msg(self, msg_index):
         return self.msgs[msg_index]
@@ -73,6 +84,10 @@ class Connection:
                 type_and_data = type_descriptor.parse_game_msg(reader)
                 if type_and_data is None:
                     break
+
+                if self.type_mask[type_and_data[0]]:
+                    continue
+
                 msg = {
                     IDX_MSG_TYPE : type_and_data[0],
                     IDX_MSG_DATA : type_and_data[1],
@@ -99,3 +114,10 @@ class Connection:
 
         self.frame.refresh_statusbar()
 
+    def get_type_mask(self):
+        return self.type_mask
+
+    def update_type_mask(self, hidden_list):
+        hidden_set = set(hidden_list)
+        for type_name in self.type_mask.keys():
+            self.type_mask[type_name] = type_name in hidden_set
