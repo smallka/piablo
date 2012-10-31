@@ -1,0 +1,20 @@
+loading attributes...
+loading type descriptors...
+  GameMessageDescriptor : 189
+  StructureDescriptor : 413
+  BasicDescriptor : 30
+opcodes: 357
+client connected
+started to connect server
+postpone data from client (len=66)
+server connected
+resume data from client (len=66)
+[WARN]19110 bits left
+[WARN]2547 bytes left
+[WARN]12963 bytes left
+[WARN]19907 bytes left
+[WARN]26851 bytes left
+[WARN]30323 bytes left
+[WARN]4564 bytes left
+[ERROR] lost connection. Reason: [Failure instance: Traceback (failure with no frames): <class 'twisted.internet.error.ConnectionLost'>: Connection to the other side was lost in a non-clean fashion: Connection lost.
+]
